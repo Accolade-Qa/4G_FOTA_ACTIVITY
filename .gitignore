@@ -1,0 +1,61 @@
+# === IDE and Editor Files ===
+# Eclipse
+.classpath
+.project
+.settings/
+.factorypath
+
+# VS Code
+.vscode/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# General Editor Backups
+*.swp
+*.bak
+*~
+
+# === Java and Build Tools ===
+# Maven output
+target/
+
+# Local build artifacts
+*.class
+*.jar
+*.war
+*.ear
+
+# === Project Specific Logs and Outputs ===
+# Logs generated during runtime
+logs/
+*.log
+
+# Results and Outputs
+output/
+results/
+screenshots/
+
+# Temporary files
+*.tmp
+*.out
+*.lock
+*.pid
+*.seed
+
+# === Sensitive Data and Local Configuration ===
+# Local configuration file (Hardware specific)
+config.properties
+
+# Input data that might contain sensitive info
+input/
+
+# === Documentation Analysis (Internal) ===
+PROJECT_ANALYSIS.md
+
+# === System Files ===
+# Windows thumbnails
+Thumbs.db
+# macOS Desktop Services Store
+.DS_Store
