@@ -20,16 +20,8 @@ import org.apache.logging.log4j.Logger;
  * etc.) is present.
  */
 public class Launcher {
-	// suraj
-
 	private static final Logger logger = LogManager.getLogger(Launcher.class);
 	private static final String CONFIG_FILE = "config.properties";
-
-	/**
-	 * Main execution loop for the application.
-	 * 
-	 * @param args Command line arguments (not currently used)
-	 */
 	public static void main(String[] args) {
 		setupDirectories();
 

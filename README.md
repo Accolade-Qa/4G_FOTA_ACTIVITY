@@ -1,82 +1,123 @@
 # FOTA Automation System
 
-A comprehensive Java-based automation suite designed for Firmware Over-The-Air (FOTA) updates on Telematics Control Units (TCU).
+Java automation for continuous FOTA execution on ATCU devices using serial telemetry + web portal batch operations.
 
-## 🚀 Overview
+## What This Project Does
 
-The FOTA Automation System streamlines the process of updating firmware on embedded devices. It coordinates serial communication with the hardware, web automation for the FOTA management platform, and intelligent file orchestration to manage update batches.
+The application continuously:
+1. reads device serial output,
+2. detects current firmware (`aeplFwVer`) and login packet details,
+3. resolves the next firmware from `input/servers.json`,
+4. generates a batch CSV,
+5. creates and runs a FOTA batch in the web portal,
+6. verifies completion using both serial progress and portal batch status,
+7. writes audit results to `results/fota_audit.csv`.
 
-## ✨ Key Features
+## Advantages of Current Approach
 
--   **Serial Communication**: Real-time monitoring of device boot sequences and internal states via serial ports.
--   **Web Automation**: Selenium-based interaction with the centralized FOTA dashboard for batch uploads and status tracking.
--   **File Orchestration**: Dynamic generation of batch configuration files (CSV) with smart versioning logic.
--   **Real-time Monitoring**: Tracks download progress and update status directly from the device console.
--   **Audit Logging**: Comprehensive recording of update history, including success/failure summaries.
+- `Dual verification`:
+  Serial-side progress/version checks and web-side batch completion both must pass before marking success.
+- `Resilient parsing`:
+  `MessageParser` supports multiple line formats (key-value, `aeplFwVer`, and `55AA` login packet), plus ANSI cleanup.
+- `Data-driven upgrade logic`:
+  Upgrade sequencing is externalized in `input/servers.json`; no code change needed to adjust state/version mappings.
+- `Safe cycle behavior`:
+  If required data is missing (e.g., no `aeplFwVer`, no valid UIN), it retries instead of forcing bad actions.
+- `Operational traceability`:
+  Detailed logs, IMEI-specific serial logs, screenshots, generated batch files, and audit CSV records.
+- `Separation of concerns`:
+  Serial transport/parsing, version resolution, CSV generation, and web automation are separated into focused classes.
 
-## 🛠 Technology Stack
+## Simpler Version (Same Functionality)
 
--   **Language**: Java 21
--   **Build Tool**: Maven
--   **Libraries**:
-    -   `jSerialComm`: Serial port communication.
-    -   `Selenium`: Web UI automation.
-    -   `Apache Commons CSV`: Parsing and generating CSV files.
-    -   `Jackson`: JSON processing.
-    -   `Log4j 2`: Logging framework.
-    -   `JUnit`: Testing framework.
+If you want the same result with less complexity, use this structure:
 
-## 📁 Project Structure
+### Target Simplified Modules
 
-| Component | Description |
-| :--- | :--- |
-| `Launcher.java` | Application entry point; initializes environment and config. |
-| `Orchestrator.java` | Workflow manager; coordinates serial and web activities. |
-| `SerialReader.java` | Manages serial port data aggregation and parsing. |
-| `FotaWebClient.java` | Handles Selenium-based web interactions with the FOTA portal. |
-| `FotaFileGenerator.java` | Generates batch upload CSV files with incremented versions. |
-| `MessageParser.java` | Extracts information from raw serial strings using regex. |
+- `Main`
+  Load config, create services, run loop.
+- `DeviceMonitor`
+  Wrap serial port read + parse. Expose one `DeviceSnapshot` object (`state`, `uin`, `imei`, `currentVersion`, `downloadProgress`).
+- `VersionService`
+  Read `servers.json`, return next version.
+- `BatchService`
+  Build CSV (either from login packet or fallback source CSV) and append audit rows.
+- `PortalService`
+  Login, upload batch, start batch, poll status.
+- `FotaEngine`
+  Single orchestration loop coordinating the five services.
 
-## ⚙️ Getting Started
+### Simplification Rules
 
-### Prerequisites
+- Replace many mutable fields in `SerialReader` with one immutable `DeviceSnapshot` updated atomically.
+- Keep one parser entry point that returns a typed event (`VERSION_FOUND`, `LOGIN_PACKET`, `PROGRESS`, `NONE`).
+- Keep one retry policy object (timeouts, polling intervals, max attempts) instead of hardcoded sleeps across classes.
+- Keep one structured result object per cycle (`CycleResult`) for logging and audit.
 
--   **JDK 21**: Ensure Java 21 is installed and configured in your environment.
--   **Maven**: Used for building and dependency management.
--   **Hardware**: TCU device connected via serial/USB.
+### Migration Plan
 
-### Configuration
+1. Keep `FirmwareResolver`, `MessageParser`, and `FotaWebClient` behavior as-is initially.
+2. Introduce `FotaEngine` + `DeviceSnapshot` and move loop logic from `Orchestrator` into it.
+3. Move CSV/audit calls behind `BatchService` to isolate file operations.
+4. Collapse extra state in `SerialReader` and expose only snapshot + events.
+5. Add 3 focused tests: version resolution, parser event detection, and cycle success/failure branching.
 
-Modify the `config.properties` file in the project root to set your environment parameters (COM ports, web URLs, credentials, etc.).
+This keeps the same functionality but makes runtime state easier to reason about and maintain.
 
-### Build & Run
-
-To build the project and create a fat JAR:
-```bash
-mvn package
-```
-
-To run the application:
-```bash
-mvn exec:java
-```
-
-## 🔄 Workflow
+## Updated Architecture Diagram
 
 ```mermaid
 graph TD
-    Launcher["Launcher (Entry)"] --> Orchestrator
-    subgraph Core Logic
-        Orchestrator["Orchestrator (Workflow)"]
-    end
-    Orchestrator --> SerialReader
-    Orchestrator --> FotaWebClient
-    Orchestrator --> FotaFileGenerator
-    SerialReader --> SerialConnection
-    SerialReader --> MessageParser
-    FotaWebClient --> Selenium[Selenium WebDriver]
+    L[Launcher] --> E[FotaEngine / Orchestrator Loop]
+
+    E --> SM[DeviceMonitor / SerialReader]
+    E --> VS[FirmwareResolver]
+    E --> BS[FotaFileGenerator + Audit Writer]
+    E --> PS[FotaWebClient]
+
+    SM --> SC[SerialConnection]
+    SM --> MP[MessageParser]
+    SM --> LW[LogWriter]
+
+    VS --> SJ[input/servers.json]
+    BS --> FC[input/fota_list.csv]
+    BS --> OB[output/fota_batch_*.csv]
+    BS --> AR[results/fota_audit.csv]
+
+    PS --> WD[Selenium ChromeDriver]
+    PS --> SS[screenshots/*.png]
+
+    LW --> PL[logs/program_progress.log]
+    LW --> SL[logs/AUTO_<IMEI>_<timestamp>.log]
 ```
 
-## 📄 License
+## Runtime Inputs and Outputs
 
-[Insert License Information Here]
+### Inputs
+
+- `input/servers.json`: state-wise firmware map.
+- `input/fota_list.csv`: fallback device list for batch generation.
+- `config.properties` (optional): overrides defaults.
+- Serial device on configured COM port.
+
+### Outputs
+
+- `output/fota_batch_*.csv`
+- `results/fota_audit.csv`
+- `logs/program_progress.log`
+- `logs/AUTO_<IMEI>_<timestamp>.log`
+- `screenshots/*.png`
+
+## Build and Run
+
+```bash
+mvn clean package
+mvn exec:java
+```
+
+Main class: `com.aepl.atcu.Launcher`
+
+## Notes
+
+- Java version in `pom.xml`: 21.
+- Default config fallback values are inside `Launcher` when `config.properties` is missing.
