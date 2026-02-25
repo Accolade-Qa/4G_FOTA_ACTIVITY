@@ -41,9 +41,9 @@ public class Launcher {
 			logger.error("Failed to load config.properties: {}", e.getMessage());
 		}
 
-		String serialPort = get(p, "serial.port", "COM22");
+		String serialPort = get(p, "serial.port", "");
 		int baud = Integer.parseInt(get(p, "serial.baud", "115200"));
-		String chromeDriver = get(p, "chromedriver.path", "D:\\Software\\chromedriver-win64\\chromedriver.exe");
+		String chromeDriver = get(p, "chromedriver.path", "");
 
 		String firmwareCsv = get(p, "firmware.csv", "input/fota_list.csv");
 		String auditCsv = get(p, "audit.csv", "results/fota_audit.csv");
@@ -51,7 +51,7 @@ public class Launcher {
 
 		String loginUrl = get(p, "login.url", "http://aepl-tcu4g-qa.accoladeelectronics.com:6102/login");
 		String user = get(p, "login.user", "suraj.bhalerao@accoladeelectronics.com");
-		String pass = get(p, "login.pass", "AD_QA_4G");
+		String pass = get(p, "login.pass", "79hqelye");
 		String deviceId = get(p, "device.id", "ATCU1234");
 		String state = get(p, "state", "Default");
 

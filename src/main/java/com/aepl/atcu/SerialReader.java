@@ -1,7 +1,5 @@
 package com.aepl.atcu;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Scanner;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -63,7 +61,7 @@ public class SerialReader {
 	 */
 	public void start() {
 		if (!connection.open()) {
-			String errMsg = "Failed to open port: " + connection.getPortName();
+			String errMsg = "Failed to open port. Tried: " + connection.getAttemptedPortsSummary();
 			logger.error(errMsg);
 			throw new RuntimeException(errMsg);
 		}
@@ -108,10 +106,9 @@ public class SerialReader {
 
 				String cleaned = parser.stripAnsi(rawLine).trim();
 				if (!cleaned.isEmpty()) {
-					String timestamped = timestampWith7() + " " + cleaned;
-					logWriter.log(timestamped);
+					logWriter.log(cleaned);
 
-					boolean pOk = processorQueue.offer(timestamped);
+					boolean pOk = processorQueue.offer(cleaned);
 					if (!pOk) {
 						logger.warn("Processor Queue full: dropping line");
 					}
@@ -255,17 +252,4 @@ public class SerialReader {
 		}
 	}
 
-	/**
-	 * Generates a high-precision timestamp string.
-	 * 
-	 * @return ISO-8601 formatted timestamp with 7 decimal places for seconds.
-	 */
-	private static String timestampWith7() {
-		LocalDateTime now = LocalDateTime.now();
-		int nano = now.getNano();
-		int frac7 = nano / 100;
-		String fracStr = String.format("%07d", frac7);
-		String base = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
-		return base + "." + fracStr;
-	}
 }

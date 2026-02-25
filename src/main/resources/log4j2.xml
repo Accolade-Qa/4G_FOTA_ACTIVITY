@@ -13,7 +13,7 @@
         <!-- Program activity log appender -->
         <RollingFile name="ProgramAppender" fileName="${basePath}/program_progress.log"
                      filePattern="${basePath}/program_progress-%d{yyyy-MM-dd}.log">
-            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n" />
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %msg%n" />
             <Policies>
                 <TimeBasedTriggeringPolicy interval="1" modulate="true" />
                 <SizeBasedTriggeringPolicy size="10 MB" />
@@ -28,7 +28,7 @@
                     <RollingFile name="SerialAppender-${ctx:serial_filename}" 
                                  fileName="${basePath}/${ctx:serial_filename}"
                                  filePattern="${basePath}/${ctx:serial_filename}-%d{yyyy-MM-dd}.log">
-                        <PatternLayout pattern="%msg%n" />
+                        <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %msg%n" />
                         <Policies>
                             <SizeBasedTriggeringPolicy size="50 MB" />
                         </Policies>

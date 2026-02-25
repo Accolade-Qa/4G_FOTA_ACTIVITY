@@ -26,7 +26,7 @@ public class MessageParser {
 	private static final Pattern VERSION_PATTERN = Pattern.compile("(?i)VERSION[:=\\s]+([^\\s,;:\\n]+)");
 	private static final Pattern STATE_PATTERN = Pattern.compile("(?i)STATE[:=\\s]+([^\\s,;:\\n]+)");
 	private static final Pattern VERSION_SIMPLE = Pattern.compile("\\d+\\.\\d+(?:\\.\\d+)*");
-	private static final Pattern FW_VER_PATTERN = Pattern.compile("(?i)aeplFwVer[:\\s]+([^\\s,;]+)");
+	private static final Pattern FW_VER_PATTERN = Pattern.compile("(?i)aeplFwVer[:=\\s]+([^\\s,;]+)");
 	private static final Pattern DOWNLOAD_PATTERN = Pattern.compile("(?i)\\[FOT\\] downloading\\s+([\\d.]+)%");
 
 	/**

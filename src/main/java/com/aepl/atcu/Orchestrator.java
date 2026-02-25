@@ -32,7 +32,8 @@ public class Orchestrator {
 
 	private static final Logger logger = LogManager.getLogger(Orchestrator.class);
 	private final SerialReader serialReader;
-	private final FotaWebClient webClient;
+	private FotaWebClient webClient;
+	private final String chromeDriverPath;
 	private final String firmwareCsvPath;
 	private final String auditCsvPath;
 	private final FirmwareResolver resolver;
@@ -54,7 +55,7 @@ public class Orchestrator {
 	public Orchestrator(String serialPort, int baud, String chromeDriverPath, String firmwareCsvPath,
 			String auditCsvPath, String firmwareJsonPath, String defaultState) throws Exception {
 		this.serialReader = new SerialReader(serialPort, baud);
-		this.webClient = new FotaWebClient(chromeDriverPath);
+		this.chromeDriverPath = chromeDriverPath;
 		this.firmwareCsvPath = firmwareCsvPath;
 		this.auditCsvPath = auditCsvPath;
 		this.resolver = new FirmwareResolver(firmwareJsonPath);
@@ -74,6 +75,7 @@ public class Orchestrator {
 	public void start(String loginUrl, String user, String pass, String deviceId) throws Exception {
 		try {
 			serialReader.start();
+			this.webClient = new FotaWebClient(chromeDriverPath);
 			webClient.login(loginUrl, user, pass);
 
 			while (true) {
@@ -92,13 +94,27 @@ public class Orchestrator {
 
 				LoginPacketInfo loginInfo = serialReader.getLastLoginPacketInfo();
 				String currentVer = serialReader.getLastAeplFwVersion();
+				boolean usingAeplFwVer = serialReader.isAeplFwVerFound();
 
-				if (!serialReader.isAeplFwVerFound() || currentVer == null || currentVer.trim().isEmpty()) {
-					logger.error("aeplFwVer not found after timeout. Retrying cycle...");
+				if (!usingAeplFwVer) {
+					if (loginInfo != null && loginInfo.version != null && !loginInfo.version.trim().isEmpty()) {
+						currentVer = loginInfo.version.trim();
+						logger.warn(
+								"aeplFwVer not found after timeout. Falling back to version from LoginPacket: {}",
+								currentVer);
+					} else {
+						logger.error("aeplFwVer not found after timeout and LoginPacket version unavailable. Retrying cycle...");
+						continue;
+					}
+				}
+
+				if (currentVer == null || currentVer.trim().isEmpty()) {
+					logger.error("Current version is empty after parsing/fallback. Retrying cycle...");
 					continue;
 				}
 
-				logger.info("Current Device Version (from aeplFwVer): " + currentVer);
+				logger.info("Current Device Version (source: {}): {}", usingAeplFwVer ? "aeplFwVer" : "LoginPacket",
+						currentVer);
 
 				if (loginInfo != null && (loginInfo.uin == null || loginInfo.uin.trim().isEmpty())) {
 					logger.error("Device UIN from LoginPacket is empty. Cannot proceed with FOTA. Retrying cycle...");

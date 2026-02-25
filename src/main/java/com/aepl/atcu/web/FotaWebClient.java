@@ -34,7 +34,9 @@ public class FotaWebClient implements AutoCloseable {
 	public FotaWebClient(String chromeDriverPath) {
 		if (chromeDriverPath != null && !chromeDriverPath.trim().isEmpty()) {
 			System.setProperty("webdriver.chrome.driver", chromeDriverPath);
-			logger.info("Setting webdriver.chrome.driver to: {}", chromeDriverPath);
+			logger.info("Using explicit webdriver.chrome.driver path: {}", chromeDriverPath);
+		} else {
+			logger.info("No webdriver.chrome.driver path configured. Using Selenium Manager auto driver resolution.");
 		}
 
 		ChromeOptions options = new ChromeOptions();
