@@ -220,6 +220,17 @@ public class SerialReader {
 		logger.info("[SR] State reset for new cycle.");
 	}
 
+	/**
+	 * Sends a raw command down to the serial connection. This can be used by
+	 * higher-level orchestrator logic to prompt the device (e.g. ask for a
+	 * login packet) without exposing the underlying connection object.
+	 *
+	 * @param cmd command string, will be suffixed with CRLF when written.
+	 */
+	public void sendCommand(String cmd) {
+		connection.writeEvent(cmd);
+	}
+
 	public boolean isAeplFwVerFound() {
 		return aeplFwVerFound;
 	}

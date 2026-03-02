@@ -16,7 +16,7 @@ The application continuously:
 ## Advantages of Current Approach
 
 - `Dual verification`:
-  Serial-side progress/version checks and web-side batch completion both must pass before marking success.
+  Serial-side progress/version checks and web-side batch completion both must pass before marking success. The serial reader now polls progress every second and will automatically abort if the percentage stalls for a significant interval.
 - `Resilient parsing`:
   `MessageParser` supports multiple line formats (key-value, `aeplFwVer`, and `55AA` login packet), plus ANSI cleanup.
 - `Data-driven upgrade logic`:
@@ -97,7 +97,8 @@ graph TD
 
 - `input/servers.json`: state-wise firmware map.
 - `input/fota_list.csv`: fallback device list for batch generation.
-- `config.properties` (optional): overrides defaults.
+- `config.properties` (optional): overrides defaults (see `login.packets.json` below).
+- `login.packets.json`: where the tool will append observed login packets; useful for audit or reopening historic device info. Defaults to `results/login_packets.json` if unset.
 - Serial device on configured COM port.
 
 ### Outputs
