@@ -31,6 +31,9 @@ public class MessageParser {
 	private static final String UIN_PREFIX = "ACON";
 	private static final Pattern IMEI_PATTERN = Pattern.compile("^\\d{13,15}$");
 
+	// Optional state to use when creating LoginPacketInfo from serial login packets
+	private String deviceState = null;
+
 	/**
 	 * Validates if the UIN starts with the required prefix (ACON).
 	 * 
@@ -49,6 +52,16 @@ public class MessageParser {
 	 */
 	private static boolean isValidImei(String imei) {
 		return imei != null && !imei.isEmpty() && IMEI_PATTERN.matcher(imei).matches();
+	}
+
+	/**
+	 * Sets the current device state captured from serial logs.
+	 * This state will be used when creating LoginPacketInfo from login packets.
+	 * 
+	 * @param state The device state to use
+	 */
+	public void setDeviceState(String state) {
+		this.deviceState = state;
 	}
 
 	/**
@@ -95,6 +108,20 @@ public class MessageParser {
 	public ParsedInfo parse(String line) {
 		if (line == null || line.isEmpty())
 			return null;
+
+		// special case: statewise protocol lines may contain a two-letter state abbreviation
+		if (line.toLowerCase().contains("statewise")) {
+			// capture the last two-letter uppercase abbreviation, e.g. "MH" in the line
+			Matcher m = Pattern.compile("\\b([A-Z]{2})\\b").matcher(line);
+			String candidate = null;
+			while (m.find()) {
+				candidate = m.group(1);
+			}
+			if (candidate != null) {
+				logger.debug("[PARSER] Detected statewise abbreviation: {}", candidate);
+				return new ParsedInfo(candidate.trim(), "STATEWISE", null);
+			}
+		}
 
 		String software = extractToken(SOFTWARE_PATTERN, line);
 		String version = extractToken(VERSION_PATTERN, line);
@@ -192,12 +219,11 @@ public class MessageParser {
 			}
 
 			if (!foundVersion.isEmpty()) {
-				// We use null for model and state because they are not present in the login
-				// packet.
-				// The LoginPacketInfo constructor handles these nulls by setting default
-				// values.
-				LoginPacketInfo loginInfo = new LoginPacketInfo(imei, iccid, UIN, foundVersion, vin, null, null);
-				logger.info("[PARSER] Valid login packet: UIN={}, IMEI={}, Version={}", UIN, imei, foundVersion);
+				// Use the captured device state (if available) instead of null
+				// This ensures the login packet is created with the actual device state
+				String stateForPacket = (deviceState != null && !deviceState.isEmpty()) ? deviceState : null;
+				LoginPacketInfo loginInfo = new LoginPacketInfo(imei, iccid, UIN, foundVersion, vin, null, stateForPacket);
+				logger.info("[PARSER] Valid login packet: UIN={}, IMEI={}, Version={}, State={}", UIN, imei, foundVersion, stateForPacket);
 				return new ParsedInfo("LOGIN", UIN, foundVersion, loginInfo);
 			}
 		}

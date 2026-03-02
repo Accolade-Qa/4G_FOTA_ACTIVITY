@@ -76,6 +76,8 @@ public class Orchestrator {
         this.serialReader = new SerialReader(serialPort, baud);
         this.auditCsvPath = auditCsvPath;
         this.resolver = new FirmwareResolver(firmwareJsonPath);
+        // provide resolver to serial reader so it can map state abbrev during parsing
+        this.serialReader.setStateResolver(this.resolver);
         this.defaultState = defaultState;
         this.loginJsonPath = (loginJsonPath == null || loginJsonPath.isEmpty()) ? "results/login_packets.json" : loginJsonPath;
     }
@@ -129,9 +131,22 @@ public class Orchestrator {
                 LoginPacketStore.persist(loginJsonPath, loginInfo);
 
                 String currentVer = loginInfo.version;
-                String deviceState = (loginInfo.state == null || "Default".equalsIgnoreCase(loginInfo.state))
-                        ? defaultState
-                        : loginInfo.state;
+                // interpret state abbreviation if necessary
+                String deviceState = loginInfo.state;
+                if (deviceState != null && resolver != null) {
+                    try {
+                        String mapped = resolver.resolveStateName(deviceState);
+                        if (mapped != null) {
+                            deviceState = mapped;
+                            logger.info("[ORCH] Mapped state abbreviation '{}' to '{}'", loginInfo.state, deviceState);
+                        }
+                    } catch (Exception e) {
+                        logger.warn("[ORCH] Error mapping state '{}': {}", deviceState, e.getMessage());
+                    }
+                }
+                if (deviceState == null || "Default".equalsIgnoreCase(deviceState)) {
+                    deviceState = defaultState;
+                }
 
                 logger.info("Device Info - UIN: {}, IMEI: {}, VIN: {}, ICCID: {}, State: {}, Current Version: {}",
                         loginInfo.uin, loginInfo.imei, loginInfo.vin, loginInfo.iccid, deviceState, currentVer);
