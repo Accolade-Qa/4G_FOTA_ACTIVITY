@@ -1,136 +1,70 @@
 package com.aepl.atcu;
 
-import java.io.FileInputStream;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Properties;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
  * Entry point for the FOTA (Firmware Over-The-Air) Automation tool.
- * This class handles configuration loading, environment setup, and orchestrates
- * the FOTA automation process.
- * 
- * NOTE: The tool expects a 'config.properties' file in the execution directory
- * or classpath. It also ensures that the required directory structure (input, output, logs,
- * results) is present.
+ * Configures hard-coded parameters and orchestrates the FOTA automation process.
  */
 public class Launcher {
 	private static final Logger logger = LogManager.getLogger(Launcher.class);
-	private static final String CONFIG_FILE = "config.properties";
-	
+
+	// Hard-coded configuration values
+	private static final String SERIAL_PORT = "COM3";
+	private static final int BAUD_RATE = 115200;
+
+	private static final String FIRMWARE_JSON = "input/servers.json";
+	private static final String AUDIT_CSV = "results/fota_audit.csv";
+	private static final String LOGIN_JSON = "results/login_packets.json";
+
+	private static final String PORTAL_URL = "http://aepl-tcu4g-qa.accoladeelectronics.com:6102/login";
+	private static final String PORTAL_USER = "suraj.bhalerao@accoladeelectronics.com";
+	private static final String PORTAL_PASS = "79hqelye";
+
+	private static final String DEFAULT_STATE = "Default";
+
 	public static void main(String[] args) {
 		setupDirectories();
 
-		Properties p = new Properties();
-		Path cwdConfig = Paths.get(System.getProperty("user.dir")).resolve(CONFIG_FILE);
-
-		try (InputStream in = Files.exists(cwdConfig) ? new FileInputStream(cwdConfig.toFile())
-				: Launcher.class.getResourceAsStream("/" + CONFIG_FILE)) {
-			if (in != null) {
-				p.load(in);
-				logger.info("Loaded config from: "
-						+ (Files.exists(cwdConfig) ? cwdConfig.toAbsolutePath() : "classpath"));
-			} else {
-				logger.warn("No config.properties found in working dir or classpath — using defaults or env vars.");
-			}
-		} catch (Exception e) {
-			logger.error("Failed to load config.properties: {}", e.getMessage());
-		}
-
-		String serialPort = get(p, "serial.port", "");
-		int baud = Integer.parseInt(get(p, "serial.baud", "115200"));
-
-		String firmwareCsv = get(p, "firmware.csv", "input/fota_batch.csv");
-		String auditCsv = get(p, "audit.csv", "results/fota_audit.csv");
-		String firmwareJson = get(p, "firmware.json", "input/servers.json");
-		String loginJson = get(p, "login.packets.json", "results/login_packets.json");
-
-		String loginUrl = get(p, "login.url", "http://aepl-tcu4g-qa.accoladeelectronics.com:6102/login");
-		String user = get(p, "login.user", "suraj.bhalerao@accoladeelectronics.com");
-		String pass = get(p, "login.pass", "79hqelye");
-		String state = get(p, "state", "Default");
-
 		try {
-			Path csvPath = Paths.get(firmwareCsv);
-			if (Files.notExists(csvPath)) {
-				Path fallback = Paths.get("input").resolve(firmwareCsv);
-				if (Files.exists(fallback)) {
-					logger.info("[LNC] Firmware CSV not found at {}, using fallback: {}", firmwareCsv, fallback);
-					firmwareCsv = fallback.toString();
-				}
-			}
+			logger.info("===== FOTA AUTOMATION LAUNCHER =====");
+			logger.info("Serial Port: {}", SERIAL_PORT);
+			logger.info("Baud Rate: {}", BAUD_RATE);
+			logger.info("Firmware JSON: {}", FIRMWARE_JSON);
+			logger.info("Audit CSV: {}", AUDIT_CSV);
+			logger.info("Portal URL: {}", PORTAL_URL);
+			logger.info("Default State: {}", DEFAULT_STATE);
 
-			logger.info("FOTA Automation Configuration:");
-			logger.info("  Serial Port: {}", serialPort);
-			logger.info("  Baud Rate: {}", baud);
-			logger.info("  Firmware JSON: {}", firmwareJson);
-			logger.info("  Audit CSV: {}", auditCsv);
-			logger.info("  Default State: {}", state);
-			logger.info("  Portal URL: {}", loginUrl);
-
-			Orchestrator orch = new Orchestrator(serialPort, baud, firmwareCsv, auditCsv, firmwareJson, state, loginJson);
-			orch.start(loginUrl, user, pass);
+			Orchestrator orch = new Orchestrator(SERIAL_PORT, BAUD_RATE, AUDIT_CSV, FIRMWARE_JSON,
+					DEFAULT_STATE, LOGIN_JSON);
+			orch.start(PORTAL_URL, PORTAL_USER, PORTAL_PASS);
 		} catch (Exception e) {
 			logger.fatal("Fatal error starting orchestrator: {}", e.getMessage(), e);
 			System.err.println("FATAL: " + e.getMessage());
 			e.printStackTrace();
-			System.exit(2);
+			System.exit(1);
 		}
 	}
 
 	/**
-	 * Initializes the required project directories and moves configuration files if
-	 * necessary.
-	 * Ensures that 'input', 'output', 'logs', 'screenshots', and 'results' folders
-	 * exist.
-	 * 
-	 * NOTE: If 'fota_list.csv' is found in the root directory but not in the
-	 * 'input' folder,
-	 * it will be automatically moved to 'input/'.
+	 * Ensures required directories exist.
 	 */
 	private static void setupDirectories() {
-		String[] dirs = { "input", "output", "logs", "screenshots", "results" };
-		for (String d : dirs) {
-			try {
-				Files.createDirectories(Paths.get(d));
-			} catch (Exception e) {
-				logger.error("Failed to create directory {}: {}", d, e.getMessage());
+		String[] dirs = { "input", "output", "logs", "results", "screenshots" };
+		for (String dir : dirs) {
+			Path path = Paths.get(dir);
+			if (Files.notExists(path)) {
+				try {
+					Files.createDirectory(path);
+					logger.info("Created directory: {}", dir);
+				} catch (Exception e) {
+					logger.warn("Failed to create directory {}: {}", dir, e.getMessage());
+				}
 			}
 		}
-
-		try {
-			Path rootCsv = Paths.get("fota_list.csv");
-			Path inputCsv = Paths.get("input/fota_list.csv");
-			if (Files.exists(rootCsv) && Files.notExists(inputCsv)) {
-				Files.move(rootCsv, inputCsv);
-				logger.info("Moved matching fota_list.csv to input/ folder.");
-			}
-		} catch (Exception e) {
-			logger.warn("Warning: could not move fota_list.csv: {}", e.getMessage());
-		}
-	}
-
-	/**
-	 * Retrieves a configuration value with fallback support for environment
-	 * variables and defaults.
-	 * 
-	 * @param p   The Properties object containing file-based config
-	 * @param key The configuration key to look up
-	 * @param def The default value if neither config nor env var is found
-	 * @return The resolved configuration string
-	 */
-	private static String get(Properties p, String key, String def) {
-		String v = p.getProperty(key);
-		if (v != null && !v.trim().isEmpty())
-			return v.trim();
-		String envKey = key.toUpperCase().replace('.', '_');
-		String env = System.getenv(envKey);
-		if (env != null && !env.trim().isEmpty())
-			return env.trim();
-		return def;
 	}
 }

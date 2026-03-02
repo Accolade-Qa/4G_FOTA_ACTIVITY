@@ -145,7 +145,7 @@ public class SerialReader {
 	 * 
 	 * @param line The cleaned log line from the device
 	 */
-	protected void processInternalState(String line) {
+	private void processInternalState(String line) {
 		MessageParser.ParsedInfo info = parser.parse(line);
 		if (info != null) {
 			// If we found aeplFwVer (which returns software="SOFTWARE"), mark it as found
@@ -231,6 +231,10 @@ public class SerialReader {
 
 	public LoginPacketInfo getLastLoginPacketInfo() {
 		return lastLoginPacketInfo;
+	}
+
+	public String getLastDeviceState() {
+		return lastDeviceState;
 	}
 
 	/**

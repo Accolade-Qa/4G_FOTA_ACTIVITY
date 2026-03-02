@@ -64,15 +64,14 @@ public class Orchestrator {
 	 * 
 	 * @param serialPort       The COM port for device serial communication
 	 * @param baud             The baud rate for serial communication
-	 * @param firmwareCsvPath  Path to the source CSV for batch generation
 	 * @param auditCsvPath     Path where audit reports are stored
 	 * @param firmwareJsonPath Path to the JSON file containing version mappings
 	 * @param defaultState     The fallback state to use if device reports 'Default'
      * @param loginJsonPath    Location where observed login packets will be saved
      * @throws Exception If initialization of serial components fails
      */
-    public Orchestrator(String serialPort, int baud, String firmwareCsvPath,
-            String auditCsvPath, String firmwareJsonPath, String defaultState, String loginJsonPath) throws Exception {
+    public Orchestrator(String serialPort, int baud, String auditCsvPath, String firmwareJsonPath, 
+            String defaultState, String loginJsonPath) throws Exception {
         this.serialReader = new SerialReader(serialPort, baud);
         this.auditCsvPath = auditCsvPath;
         this.resolver = new FirmwareResolver(firmwareJsonPath);

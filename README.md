@@ -1,124 +1,105 @@
 # FOTA Automation System
 
-Java automation for continuous FOTA execution on ATCU devices using serial telemetry + web portal batch operations.
+Java automation for continuous firmware updates on ATCU devices using serial communication and web portal integration.
 
-## What This Project Does
+## Quick Start
 
-The application continuously:
-1. reads device serial output,
-2. detects current firmware (`aeplFwVer`) and login packet details,
-3. resolves the next firmware from `input/servers.json`,
-4. generates a batch CSV,
-5. creates and runs a FOTA batch in the web portal,
-6. verifies completion using both serial progress and portal batch status,
-7. writes audit results to `results/fota_audit.csv`.
+### Prerequisites
+- Java 21+
+- Maven 3.6+
+- Device connected to serial port (e.g., COM3)
+- Web portal credentials
+- Required input files:
+  - `input/servers.json` - Firmware version mappings by state
 
-## Advantages of Current Approach
+### Configuration
 
-- `Dual verification`:
-  Serial-side progress/version checks and web-side batch completion both must pass before marking success. The serial reader now polls progress every second and will automatically abort if the percentage stalls for a significant interval.
-- `Resilient parsing`:
-  `MessageParser` supports multiple line formats (key-value, `aeplFwVer`, and `55AA` login packet), plus ANSI cleanup.
-- `Data-driven upgrade logic`:
-  Upgrade sequencing is externalized in `input/servers.json`; no code change needed to adjust state/version mappings.
-- `Safe cycle behavior`:
-  If required data is missing (e.g., no `aeplFwVer`, no valid UIN), it retries instead of forcing bad actions.
-- `Operational traceability`:
-  Detailed logs, IMEI-specific serial logs, screenshots, generated batch files, and audit CSV records.
-- `Separation of concerns`:
-  Serial transport/parsing, version resolution, CSV generation, and web automation are separated into focused classes.
+Edit [Launcher.java](src/main/java/com/aepl/atcu/Launcher.java) to set:
 
-## Simpler Version (Same Functionality)
+```java
+private static final String SERIAL_PORT = "COM3";
+private static final int BAUD_RATE = 115200;
 
-If you want the same result with less complexity, use this structure:
+private static final String FIRMWARE_JSON = "input/servers.json";
+private static final String AUDIT_CSV = "results/fota_audit.csv";
+private static final String LOGIN_JSON = "results/login_packets.json";
 
-### Target Simplified Modules
-
-- `Main`
-  Load config, create services, run loop.
-- `DeviceMonitor`
-  Wrap serial port read + parse. Expose one `DeviceSnapshot` object (`state`, `uin`, `imei`, `currentVersion`, `downloadProgress`).
-- `VersionService`
-  Read `servers.json`, return next version.
-- `BatchService`
-  Build CSV (either from login packet or fallback source CSV) and append audit rows.
-- `PortalService`
-  Login, upload batch, start batch, poll status.
-- `FotaEngine`
-  Single orchestration loop coordinating the five services.
-
-### Simplification Rules
-
-- Replace many mutable fields in `SerialReader` with one immutable `DeviceSnapshot` updated atomically.
-- Keep one parser entry point that returns a typed event (`VERSION_FOUND`, `LOGIN_PACKET`, `PROGRESS`, `NONE`).
-- Keep one retry policy object (timeouts, polling intervals, max attempts) instead of hardcoded sleeps across classes.
-- Keep one structured result object per cycle (`CycleResult`) for logging and audit.
-
-### Migration Plan
-
-1. Keep `FirmwareResolver`, `MessageParser`, and `FotaWebClient` behavior as-is initially.
-2. Introduce `FotaEngine` + `DeviceSnapshot` and move loop logic from `Orchestrator` into it.
-3. Move CSV/audit calls behind `BatchService` to isolate file operations.
-4. Collapse extra state in `SerialReader` and expose only snapshot + events.
-5. Add 3 focused tests: version resolution, parser event detection, and cycle success/failure branching.
-
-This keeps the same functionality but makes runtime state easier to reason about and maintain.
-
-## Updated Architecture Diagram
-
-```mermaid
-graph TD
-    L[Launcher] --> E[FotaEngine / Orchestrator Loop]
-
-    E --> SM[DeviceMonitor / SerialReader]
-    E --> VS[FirmwareResolver]
-    E --> BS[FotaFileGenerator + Audit Writer]
-    E --> PS[FotaWebClient]
-
-    SM --> SC[SerialConnection]
-    SM --> MP[MessageParser]
-    SM --> LW[LogWriter]
-
-    VS --> SJ[input/servers.json]
-    BS --> FC[input/fota_list.csv]
-    BS --> OB[output/fota_batch_*.csv]
-    BS --> AR[results/fota_audit.csv]
-
-    PS --> WD[Selenium ChromeDriver]
-    PS --> SS[screenshots/*.png]
-
-    LW --> PL[logs/program_progress.log]
-    LW --> SL[logs/AUTO_<IMEI>_<timestamp>.log]
+private static final String PORTAL_URL = "http://aepl-tcu4g-qa.accoladeelectronics.com:6102/login";
+private static final String PORTAL_USER = "suraj.bhalerao@accoladeelectronics.com";
+private static final String PORTAL_PASS = "79hqelye";
+private static final String DEFAULT_STATE = "Default";
 ```
 
-## Runtime Inputs and Outputs
-
-### Inputs
-
-- `input/servers.json`: state-wise firmware map.
-- `input/fota_list.csv`: fallback device list for batch generation.
-- `config.properties` (optional): overrides defaults (see `login.packets.json` below).
-- `login.packets.json`: where the tool will append observed login packets; useful for audit or reopening historic device info. Defaults to `results/login_packets.json` if unset.
-- Serial device on configured COM port.
-
-### Outputs
-
-- `output/fota_batch_*.csv`
-- `results/fota_audit.csv`
-- `logs/program_progress.log`
-- `logs/AUTO_<IMEI>_<timestamp>.log`
-- `screenshots/*.png`
-
-## Build and Run
+### Run
 
 ```bash
-mvn clean package
-mvn exec:java
+mvn clean compile exec:java -Dexec.mainClass="com.aepl.atcu.Launcher"
 ```
 
-Main class: `com.aepl.atcu.Launcher`
+## Input Files
 
-## Notes
+### input/servers.json
+Defines firmware sequences by state (with optional two-letter abbreviations):
 
-- Java version in `pom.xml`: 21.
-- Default config fallback values are inside `Launcher` when `config.properties` is missing.
+```json
+[
+  {
+    "state": "Maharashtra",
+    "stateAbbreviation": "MH",
+    "firmware": [
+      { "firmwareVersion": "5.2.11", "fileName": "ATCU_5.2.8_REL24.bin" },
+      { "firmwareVersion": "5.2.12", "fileName": "ATCU_5.2.9_REL04.bin" }
+    ]
+  }
+]
+```
+
+## Output Files
+
+- **logs/** - Device serial communication logs (per IMEI)
+- **results/login_packets.json** - Captured device login information
+- **results/fota_audit.csv** - Upgrade history and results
+- **output/** - Generated batch CSVs
+- **screenshots/** - Web portal automation screenshots
+
+## Device Serial Log Format
+
+The system recognizes:
+- **Standard state messages**: `STATE=STABLE` or `VERSION: 5.2.8_REL24`
+- **Statewise protocol**: `.  statewise prtcl    |  SWEMP     MH` (extracts `MH` abbreviation)
+- **Login packets**: `55AA,0,0,0,IMEI,ICCID,UIN,VERSION,VIN`
+
+State abbreviations are automatically mapped to full names using `servers.json`.
+
+## Architecture
+
+```
+Launcher
+  ↓
+Orchestrator (main loop)
+  ├→ SerialReader (device communication)
+  ├→ MessageParser (serial log parsing)
+  ├→ FirmwareResolver (version mapping)
+  ├→ FotaWebClient (portal automation)
+  └→ FotaFileGenerator (CSV/audit generation)
+```
+
+## Features
+
+- ✅ Dual verification: Serial logs + Web portal batch status
+- ✅ Automatic state abbreviation mapping (MH → Maharashtra)
+- ✅ Multi-format log parsing
+- ✅ Per-device IMEI-based logging
+- ✅ Audit trail for all upgrades
+- ✅ Retry logic for robustness
+
+## Troubleshooting
+
+### Serial port not found
+Verify port in Device Manager and update `SERIAL_PORT` in `Launcher.java`.
+
+### Login packet shows default state
+Ensure device sends state in logs before login packet. Check `servers.json` has `stateAbbreviation` entries.
+
+### Version not matched in servers.json
+Verify binary filename follows pattern `ATCU_X.X.X_RELMM.bin` and device reports matching version from that filename.
