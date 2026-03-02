@@ -28,6 +28,28 @@ public class MessageParser {
 	private static final Pattern VERSION_SIMPLE = Pattern.compile("\\d+\\.\\d+(?:\\.\\d+)*");
 	private static final Pattern FW_VER_PATTERN = Pattern.compile("(?i)aeplFwVer[:=\\s]+([^\\s,;]+)");
 	private static final Pattern DOWNLOAD_PATTERN = Pattern.compile("(?i)\\[FOT\\] downloading\\s+([\\d.]+)%");
+	private static final String UIN_PREFIX = "ACON";
+	private static final Pattern IMEI_PATTERN = Pattern.compile("^\\d{13,15}$");
+
+	/**
+	 * Validates if the UIN starts with the required prefix (ACON).
+	 * 
+	 * @param uin The UIN to validate
+	 * @return True if UIN is valid, false otherwise
+	 */
+	private static boolean isValidUin(String uin) {
+		return uin != null && !uin.isEmpty() && uin.startsWith(UIN_PREFIX);
+	}
+
+	/**
+	 * Validates if the IMEI is in valid format (13-15 digits).
+	 * 
+	 * @param imei The IMEI to validate
+	 * @return True if IMEI is valid, false otherwise
+	 */
+	private static boolean isValidImei(String imei) {
+		return imei != null && !imei.isEmpty() && IMEI_PATTERN.matcher(imei).matches();
+	}
 
 	/**
 	 * Removes ANSI escape codes (colors/formatting) from a string.
@@ -156,12 +178,26 @@ public class MessageParser {
 			String foundVersion = parts.length > 7 ? parts[7].trim() : "";
 			String vin = parts.length > 8 ? parts[8].trim() : "";
 
+			// Validate UIN and IMEI before creating LoginPacketInfo
+			if (!isValidUin(UIN)) {
+				logger.warn("[PARSER] Invalid UIN (must start with {}): {}. Skipping login packet.",
+						UIN_PREFIX, UIN);
+				return null;
+			}
+			
+			if (!isValidImei(imei)) {
+				logger.warn("[PARSER] Invalid IMEI (must be 13-15 digits): {}. Skipping login packet.",
+						imei);
+				return null;
+			}
+
 			if (!foundVersion.isEmpty()) {
 				// We use null for model and state because they are not present in the login
 				// packet.
 				// The LoginPacketInfo constructor handles these nulls by setting default
 				// values.
 				LoginPacketInfo loginInfo = new LoginPacketInfo(imei, iccid, UIN, foundVersion, vin, null, null);
+				logger.info("[PARSER] Valid login packet: UIN={}, IMEI={}, Version={}", UIN, imei, foundVersion);
 				return new ParsedInfo("LOGIN", UIN, foundVersion, loginInfo);
 			}
 		}

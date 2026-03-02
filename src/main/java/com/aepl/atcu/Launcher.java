@@ -12,16 +12,16 @@ import org.apache.logging.log4j.Logger;
 /**
  * Entry point for the FOTA (Firmware Over-The-Air) Automation tool.
  * This class handles configuration loading, environment setup, and orchestrates
- * target tool execution.
+ * the FOTA automation process.
  * 
  * NOTE: The tool expects a 'config.properties' file in the execution directory
- * or classpath.
- * It also ensures that the required directory structure (input, output, logs,
- * etc.) is present.
+ * or classpath. It also ensures that the required directory structure (input, output, logs,
+ * results) is present.
  */
 public class Launcher {
 	private static final Logger logger = LogManager.getLogger(Launcher.class);
 	private static final String CONFIG_FILE = "config.properties";
+	
 	public static void main(String[] args) {
 		setupDirectories();
 
@@ -43,16 +43,14 @@ public class Launcher {
 
 		String serialPort = get(p, "serial.port", "");
 		int baud = Integer.parseInt(get(p, "serial.baud", "115200"));
-		String chromeDriver = get(p, "chromedriver.path", "");
 
-		String firmwareCsv = get(p, "firmware.csv", "input/fota_list.csv");
+		String firmwareCsv = get(p, "firmware.csv", "input/fota_batch.csv");
 		String auditCsv = get(p, "audit.csv", "results/fota_audit.csv");
 		String firmwareJson = get(p, "firmware.json", "input/servers.json");
 
 		String loginUrl = get(p, "login.url", "http://aepl-tcu4g-qa.accoladeelectronics.com:6102/login");
 		String user = get(p, "login.user", "suraj.bhalerao@accoladeelectronics.com");
 		String pass = get(p, "login.pass", "79hqelye");
-		String deviceId = get(p, "device.id", "ATCU1234");
 		String state = get(p, "state", "Default");
 
 		try {
@@ -65,9 +63,16 @@ public class Launcher {
 				}
 			}
 
-			Orchestrator orch = new Orchestrator(serialPort, baud, chromeDriver, firmwareCsv, auditCsv, firmwareJson,
-					state);
-			orch.start(loginUrl, user, pass, deviceId);
+			logger.info("FOTA Automation Configuration:");
+			logger.info("  Serial Port: {}", serialPort);
+			logger.info("  Baud Rate: {}", baud);
+			logger.info("  Firmware JSON: {}", firmwareJson);
+			logger.info("  Audit CSV: {}", auditCsv);
+			logger.info("  Default State: {}", state);
+			logger.info("  Portal URL: {}", loginUrl);
+
+			Orchestrator orch = new Orchestrator(serialPort, baud, firmwareCsv, auditCsv, firmwareJson, state);
+			orch.start(loginUrl, user, pass);
 		} catch (Exception e) {
 			logger.fatal("Fatal error starting orchestrator: {}", e.getMessage(), e);
 			System.err.println("FATAL: " + e.getMessage());

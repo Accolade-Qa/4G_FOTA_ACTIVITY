@@ -10,43 +10,22 @@
             <PatternLayout pattern="%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n" />
         </Console>
 
-        <!-- Program activity log appender -->
-        <RollingFile name="ProgramAppender" fileName="${basePath}/program_progress.log"
-                     filePattern="${basePath}/program_progress-%d{yyyy-MM-dd}.log">
-            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %msg%n" />
+        <!-- Consolidated FOTA log appender - all logs go to the same file managed by LogWriter -->
+        <RollingFile name="FotaAppender" fileName="${basePath}/AUTO_FOTA.log"
+                     filePattern="${basePath}/AUTO_FOTA-%d{yyyy-MM-dd}.log">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n" />
             <Policies>
                 <TimeBasedTriggeringPolicy interval="1" modulate="true" />
-                <SizeBasedTriggeringPolicy size="10 MB" />
+                <SizeBasedTriggeringPolicy size="50 MB" />
             </Policies>
             <DefaultRolloverStrategy max="10"/>
         </RollingFile>
-
-        <!-- Serial log appender (this will be routed programmatically from LogWriter) -->
-        <Routing name="SerialRoutingAppender">
-            <Routes pattern="$${ctx:serial_filename}">
-                <Route>
-                    <RollingFile name="SerialAppender-${ctx:serial_filename}" 
-                                 fileName="${basePath}/${ctx:serial_filename}"
-                                 filePattern="${basePath}/${ctx:serial_filename}-%d{yyyy-MM-dd}.log">
-                        <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %msg%n" />
-                        <Policies>
-                            <SizeBasedTriggeringPolicy size="50 MB" />
-                        </Policies>
-                    </RollingFile>
-                </Route>
-            </Routes>
-        </Routing>
     </Appenders>
 
     <Loggers>
         <Root level="info">
             <AppenderRef ref="Console" />
-            <AppenderRef ref="ProgramAppender" />
+            <AppenderRef ref="FotaAppender" />
         </Root>
-
-        <!-- Logger specifically for the Serial LogWriter -->
-        <Logger name="com.aepl.atcu.logging.SerialLogger" level="info" additivity="false">
-            <AppenderRef ref="SerialRoutingAppender" />
-        </Logger>
     </Loggers>
 </Configuration>

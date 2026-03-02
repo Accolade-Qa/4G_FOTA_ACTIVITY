@@ -27,8 +27,9 @@ import org.apache.logging.log4j.Logger;
 public class LogWriter implements AutoCloseable {
 
     private static final Logger logger = LogManager.getLogger(LogWriter.class);
-    private static final String DEFAULT_PREFIX = "AUTO_SESSION_";
+    private static final String DEFAULT_PREFIX = "AUTO_FOTA_";
     private static final DateTimeFormatter SERIAL_TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private final BlockingQueue<String> queue = new LinkedBlockingQueue<>(20000);
     private final ExecutorService executor;
     private String logFilename = null;
@@ -46,18 +47,18 @@ public class LogWriter implements AutoCloseable {
     }
 
     /**
-     * Sets the IMEI and initializes the serial log filename.
-     * Format: AUTO_{IMEI}_{DATE}_{TIME}.log
+     * Sets the IMEI and initializes the FOTA log filename.
+     * Format: AUTO_FOTA_{IMEI}_{DATE}.log
      */
     public synchronized void setImei(String imei) {
         if (imei == null || imei.isEmpty())
             return;
-        String timestamp = buildTimestamp();
-        String imeiFile = String.format("AUTO_%s_%s.log", imei, timestamp);
+        String dateStamp = java.time.LocalDateTime.now().format(DATE_FORMAT);
+        String imeiFile = String.format("AUTO_FOTA_%s_%s.log", imei, dateStamp);
         if (!imeiFile.equals(this.logFilename)) {
             this.logFilename = imeiFile;
             ensureSerialFileExists();
-            logger.info("Serial log switched to IMEI file: {}", logFilename);
+            logger.info("FOTA log switched to IMEI file: {}", logFilename);
         }
     }
 
@@ -84,9 +85,10 @@ public class LogWriter implements AutoCloseable {
 
     private synchronized void initializeDefaultSerialLog() {
         if (this.logFilename == null || this.logFilename.trim().isEmpty()) {
-            this.logFilename = DEFAULT_PREFIX + buildTimestamp() + ".log";
+            String dateStamp = java.time.LocalDateTime.now().format(DATE_FORMAT);
+            this.logFilename = DEFAULT_PREFIX + "DEFAULT_" + dateStamp + ".log";
             ensureSerialFileExists();
-            logger.info("Serial log initialized: {}", logFilename);
+            logger.info("FOTA log initialized: {}", logFilename);
         }
     }
 

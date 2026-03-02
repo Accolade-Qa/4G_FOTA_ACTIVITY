@@ -28,6 +28,17 @@ import org.apache.logging.log4j.Logger;
 public class FotaFileGenerator {
 
 	private static final Logger logger = LogManager.getLogger(FotaFileGenerator.class);
+	private static final String UIN_PREFIX = "ACON";
+
+	/**
+	 * Validates if the UIN starts with the required prefix (ACON).
+	 * 
+	 * @param uin The UIN to validate
+	 * @return True if UIN starts with ACON, false otherwise
+	 */
+	private static boolean isValidUin(String uin) {
+		return uin != null && uin.startsWith(UIN_PREFIX);
+	}
 
 	/**
 	 * Reads a source CSV, increments the version (UFW) for each entry, and writes a
@@ -49,6 +60,13 @@ public class FotaFileGenerator {
 
 		for (CSVRecord record : parser) {
 			String uin = record.isMapped("UIN") ? record.get("UIN") : "Unknown";
+			
+			// Validate UIN starts with ACON
+			if (!isValidUin(uin)) {
+				logger.warn("[GEN] Skipping record with invalid UIN (must start with {}): {}", UIN_PREFIX, uin);
+				continue;
+			}
+			
 			String oldUfw = record.get("UFW");
 			String newUfw = incrementUfw(oldUfw);
 
@@ -100,6 +118,14 @@ public class FotaFileGenerator {
 		List<List<String>> newRecords = new ArrayList<>();
 
 		for (CSVRecord record : parser) {
+			String uin = record.isMapped("UIN") ? record.get("UIN") : "Unknown";
+			
+			// Validate UIN starts with ACON
+			if (!isValidUin(uin)) {
+				logger.warn("[GEN] Skipping record with invalid UIN (must start with {}): {}", UIN_PREFIX, uin);
+				continue;
+			}
+			
 			List<String> row = new ArrayList<>();
 			for (String header : headers) {
 				if (header.equalsIgnoreCase("UFW")) {
