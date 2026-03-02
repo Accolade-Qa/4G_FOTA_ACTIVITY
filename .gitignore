@@ -51,7 +51,7 @@ config.properties
 # Input data that might contain sensitive info
 input/
 
-# === Documentation Analysis (Internal) ===
+# === Documentation Analysis  (Internal) ===
 PROJECT_ANALYSIS.md
 COMPLETE_REFERENCE.md
 QUICKSTART.md
