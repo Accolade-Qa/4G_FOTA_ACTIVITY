@@ -37,8 +37,12 @@ public class SerialReader {
 	private String lastSoftwareVersion = null;
 	private String lastAeplFwVersion = null;
 	private String lastDeviceId = null;
+	private String lastDeviceState = null;
 	private LoginPacketInfo lastLoginPacketInfo = null;
 	private boolean aeplFwVerFound = false;
+
+	// optional resolver used to map state abbreviations to full names
+	private com.aepl.atcu.logic.FirmwareResolver stateResolver = null;
 
 	/**
 	 * Initializes the SerialReader with connection parameters.
@@ -141,7 +145,7 @@ public class SerialReader {
 	 * 
 	 * @param line The cleaned log line from the device
 	 */
-	private void processInternalState(String line) {
+	protected void processInternalState(String line) {
 		MessageParser.ParsedInfo info = parser.parse(line);
 		if (info != null) {
 			// If we found aeplFwVer (which returns software="SOFTWARE"), mark it as found
@@ -155,6 +159,28 @@ public class SerialReader {
 			if (!info.software.equals("SOFTWARE") && !info.software.equals("FIRMWARE")) {
 				this.lastDeviceId = info.software;
 			}
+			
+			// Capture the device state if it's not "LOGIN" or "UNKNOWN"
+			if (info.state != null && !info.state.equals("LOGIN") && !info.state.equals("UNKNOWN")) {
+				String raw = info.state;
+				// if state looks like a two-letter code and we have a resolver, attempt to map
+				if (stateResolver != null && raw.matches("^[A-Za-z]{2}$")) {
+					try {
+						String mapped = stateResolver.resolveStateName(raw);
+						if (mapped != null) {
+							raw = mapped;
+							logger.info("[SR] Mapped state abbreviation '{}' to full name '{}'", info.state, raw);
+						}
+					} catch (Exception e) {
+						logger.warn("[SR] Failed to map state abbreviation {}: {}", raw, e.getMessage());
+					}
+				}
+				this.lastDeviceState = raw;
+				logger.debug("[SR] Captured device state: {}", raw);
+				// Update the parser with the latest device state for future login packet parsing
+				parser.setDeviceState(raw);
+			}
+			
 			if (info.loginPacketInfo != null) {
 				this.lastLoginPacketInfo = info.loginPacketInfo;
 				// Trigger the creation of a separate serial log file with IMEI
@@ -215,9 +241,31 @@ public class SerialReader {
 		this.lastSoftwareVersion = null;
 		this.lastAeplFwVersion = null;
 		this.lastDownloadProgress = 0.0;
+		this.lastDeviceState = null;
 		this.lastLoginPacketInfo = null;
 		this.aeplFwVerFound = false;
+		parser.setDeviceState(null);
 		logger.info("[SR] State reset for new cycle.");
+	}
+
+	/**
+	 * Allows the orchestrator to provide a resolver which can map two-letter
+	 * state abbreviations (MH, BR, etc.) to the full state name found in the
+	 * servers.json file.  This is used when parsing "statewise" log lines.
+	 */
+	public void setStateResolver(com.aepl.atcu.logic.FirmwareResolver resolver) {
+		this.stateResolver = resolver;
+	}
+
+	/**
+	 * Sends a raw command down to the serial connection. This can be used by
+	 * higher-level orchestrator logic to prompt the device (e.g. ask for a
+	 * login packet) without exposing the underlying connection object.
+	 *
+	 * @param cmd command string, will be suffixed with CRLF when written.
+	 */
+	public void sendCommand(String cmd) {
+		connection.writeEvent(cmd);
 	}
 
 	public boolean isAeplFwVerFound() {

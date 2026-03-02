@@ -1,18 +1,25 @@
 package com.aepl.atcu.util;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * Data model for device login packet information extracted from serial output.
  * It encapsulates device identity (IMEI, ICCID, UIN), firmware versions, and
  * state metadata.
+ *
+ * Jackson is used to persist instances to a JSON file for future reference. The
+ * annotated constructor allows automatic serialization/deserialization without
+ * needing a no-arg constructor.
  */
 public class LoginPacketInfo {
-	public final String imei;
-	public final String iccid;
-	public final String uin;
-	public final String version;
-	public final String vin;
-	public final String model;
-	public final String state;
+    public final String imei;
+    public final String iccid;
+    public final String uin;
+    public final String version;
+    public final String vin;
+    public final String model;
+    public final String state;
 
 	/**
 	 * Constructs a new LoginPacketInfo with provided device details.
@@ -25,8 +32,18 @@ public class LoginPacketInfo {
 	 * @param model   Device model (defaults to "4G" if empty)
 	 * @param state   Device state (defaults to "Default" if empty)
 	 */
-	public LoginPacketInfo(String imei, String iccid, String uin, String version, String vin, String model,
-			String state) {
+/**
+     * Primary constructor. Jackson will use this when deserializing from JSON.
+     */
+    @JsonCreator
+    public LoginPacketInfo(
+            @JsonProperty("imei") String imei,
+            @JsonProperty("iccid") String iccid,
+            @JsonProperty("uin") String uin,
+            @JsonProperty("version") String version,
+            @JsonProperty("vin") String vin,
+            @JsonProperty("model") String model,
+            @JsonProperty("state") String state) {
 		this.imei = imei;
 		this.iccid = iccid;
 		this.uin = uin;

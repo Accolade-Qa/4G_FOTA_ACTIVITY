@@ -47,6 +47,7 @@ public class Launcher {
 		String firmwareCsv = get(p, "firmware.csv", "input/fota_batch.csv");
 		String auditCsv = get(p, "audit.csv", "results/fota_audit.csv");
 		String firmwareJson = get(p, "firmware.json", "input/servers.json");
+		String loginJson = get(p, "login.packets.json", "results/login_packets.json");
 
 		String loginUrl = get(p, "login.url", "http://aepl-tcu4g-qa.accoladeelectronics.com:6102/login");
 		String user = get(p, "login.user", "suraj.bhalerao@accoladeelectronics.com");
@@ -71,7 +72,7 @@ public class Launcher {
 			logger.info("  Default State: {}", state);
 			logger.info("  Portal URL: {}", loginUrl);
 
-			Orchestrator orch = new Orchestrator(serialPort, baud, firmwareCsv, auditCsv, firmwareJson, state);
+			Orchestrator orch = new Orchestrator(serialPort, baud, firmwareCsv, auditCsv, firmwareJson, state, loginJson);
 			orch.start(loginUrl, user, pass);
 		} catch (Exception e) {
 			logger.fatal("Fatal error starting orchestrator: {}", e.getMessage(), e);

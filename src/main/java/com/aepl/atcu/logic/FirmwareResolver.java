@@ -25,6 +25,8 @@ public class FirmwareResolver {
     private static final Logger logger = LogManager.getLogger(FirmwareResolver.class);
     private final String jsonPath;
     private final ObjectMapper mapper = new ObjectMapper();
+    // cache abbreviation -> stateName map, lazily populated
+    private java.util.Map<String,String> abbreviationMap = null;
 
     /**
      * Constructs the resolver with a path to the configuration JSON.
@@ -63,12 +65,26 @@ public class FirmwareResolver {
 
         for (JsonNode stateNode : root) {
             String stateName = stateNode.get("state").asText().trim();
+            // populate abbreviation map while we're scanning
+            if (abbreviationMap == null) {
+                abbreviationMap = new java.util.HashMap<>();
+            }
+            JsonNode abbrNode = stateNode.get("stateAbbreviation");
+            if (abbrNode != null && !abbrNode.asText().isEmpty()) {
+                abbreviationMap.put(abbrNode.asText().trim().toUpperCase(), stateName);
+            }
             if (stateName.equalsIgnoreCase(normalizedState)) {
                 JsonNode firmwareArray = stateNode.get("firmware");
                 if (firmwareArray != null && firmwareArray.isArray()) {
                     List<String> versions = new ArrayList<>();
+                    List<String> filenames = new ArrayList<>();
                     for (JsonNode fw : firmwareArray) {
-                        versions.add(fw.get("firmwareVersion").asText().trim());
+                        String filename = fw.get("fileName").asText().trim();
+                        filenames.add(filename);
+                        // Extract binary version from filename (e.g., ATCU_5.2.8_REL24.bin -> 5.2.8_REL24)
+                        String binaryVersion = extractVersionFromFilename(filename);
+                        versions.add(binaryVersion);
+                        logger.debug("[RESOLVER] File: {}, Binary Version: {}", filename, binaryVersion);
                     }
 
                     logger.debug("[RESOLVER] Found versions in JSON for {}: {}", stateName, versions);
@@ -134,10 +150,48 @@ public class FirmwareResolver {
     private boolean isSameVersion(String v1, String v2) {
         if (v1 == null || v2 == null)
             return false;
+        // Remove all non-numeric and non-dot characters to compare base versions
+        // e.g., 5.2.8_REL24 -> 5.2.8 and 5.2.8_REL24 -> 5.2.8 (exact match)
         String s1 = v1.split("_")[0].split("-")[0].trim();
         String s2 = v2.split("_")[0].split("-")[0].trim();
         return s1.equalsIgnoreCase(s2);
     }
+
+    /**
+     * Extracts the firmware version from a binary filename.
+     * Pattern: ATCU_5.2.8_REL24.bin -> 5.2.8_REL24
+     * 
+     * @param filename The binary filename
+     * @return Extracted version string, or the original filename if extraction fails
+     */
+    private String extractVersionFromFilename(String filename) {
+        if (filename == null || filename.isEmpty()) {
+            return "";
+        }
+        
+        // Remove directory path if present
+        String name = filename.substring(filename.lastIndexOf(java.io.File.separator) + 1);
+        
+        // Pattern: ATCU_X.X.X_RELMM.bin or similar
+        // Remove extension
+        if (name.endsWith(".bin")) {
+            name = name.substring(0, name.length() - 4);
+        }
+        
+        // Remove prefix (ATCU_)
+        if (name.startsWith("ATCU_") || name.startsWith("atcu_")) {
+            name = name.substring(5);
+        }
+        
+        // Remove trailing " - Copy" or similar variations
+        if (name.contains(" - ")) {
+            name = name.substring(0, name.indexOf(" - ")).trim();
+        }
+        
+        logger.debug("[RESOLVER] Extracted version from filename '{}': '{}'", filename, name);
+        return name;
+    }
+
 
     /**
      * Numerically compares two semantic-like version strings.
@@ -169,6 +223,49 @@ public class FirmwareResolver {
             return 0;
         } catch (Exception e) {
             return v1.compareToIgnoreCase(v2);
+        }
+    }
+
+    /**
+     * Resolve a full state name for a given two‑letter abbreviation.
+     * Reads the JSON mapping file if necessary and caches the results.
+     *
+     * @param abbr Two‑letter state abbreviation (e.g. "MH", "BR")
+     * @return The corresponding state name from servers.json or null if not found
+     * @throws IOException If the JSON cannot be loaded
+     */
+    public String resolveStateName(String abbr) throws IOException {
+        if (abbr == null)
+            return null;
+        if (abbreviationMap == null) {
+            // force a read of the file to build the map
+            initAbbreviationMap();
+        }
+        return abbreviationMap.get(abbr.trim().toUpperCase());
+    }
+
+    /**
+     * Reads the JSON configuration and builds the abbreviation map.
+     */
+    private void initAbbreviationMap() throws IOException {
+        abbreviationMap = new java.util.HashMap<>();
+        File jsonFile = new File(jsonPath);
+        if (!jsonFile.exists()) {
+            throw new IOException("Firmware JSON not found at: " + jsonPath);
+        }
+        JsonNode root = mapper.readTree(jsonFile);
+        if (root.isArray()) {
+            for (JsonNode stateNode : root) {
+                JsonNode abbrNode = stateNode.get("stateAbbreviation");
+                JsonNode nameNode = stateNode.get("state");
+                if (abbrNode != null && nameNode != null) {
+                    String a = abbrNode.asText().trim().toUpperCase();
+                    String n = nameNode.asText().trim();
+                    if (!a.isEmpty() && !n.isEmpty()) {
+                        abbreviationMap.put(a, n);
+                    }
+                }
+            }
         }
     }
 }
