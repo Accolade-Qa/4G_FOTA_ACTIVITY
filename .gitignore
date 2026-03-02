@@ -53,6 +53,9 @@ input/
 
 # === Documentation Analysis (Internal) ===
 PROJECT_ANALYSIS.md
+COMPLETE_REFERENCE.md
+QUICKSTART.md
+REFACTORED_FLOW.md
 
 # === System Files ===
 # Windows thumbnails
