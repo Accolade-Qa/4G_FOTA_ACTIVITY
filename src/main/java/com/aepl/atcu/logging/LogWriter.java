@@ -92,6 +92,7 @@ public class LogWriter implements AutoCloseable {
         }
     }
 
+    @SuppressWarnings("unused")
     private static String buildTimestamp() {
         return new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
     }
