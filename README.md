@@ -77,6 +77,16 @@ State abbreviations are automatically mapped to full names using `servers.json`.
 Launcher
   ↓
 Orchestrator (main loop)
+
+* The orchestrator now treats the first valid login packet it observes as the
+  starting point for a FOTA cycle.  Subsequent packets received while an
+  upgrade is in progress are ignored until the cycle completes – this prevents
+  the automation from repeatedly kicking off new batches on intermediate
+  reboot/login packets.
+* After download progress reaches 100%, the code will patiently wait through
+  multiple reboot/login sequences and only proceed once the device reports the
+  **target version**.  Previous behaviour would abort on the first post‑download
+  packet even if it represented an intermediate firmware number.
   ├→ SerialReader (device communication)
   ├→ MessageParser (serial log parsing)
   ├→ FirmwareResolver (version mapping)

@@ -14,7 +14,8 @@ public class Launcher {
 	private static final Logger logger = LogManager.getLogger(Launcher.class);
 
 	// Hard-coded configuration values
-	private static final String SERIAL_PORT = "COM3";
+	// Keep blank/null to auto-detect active serial port at startup.
+	private static final String SERIAL_PORT = "";
 	private static final int BAUD_RATE = 115200;
 
 	private static final String FIRMWARE_JSON = "input/servers.json";
@@ -32,7 +33,8 @@ public class Launcher {
 
 		try {
 			logger.info("===== FOTA AUTOMATION LAUNCHER =====");
-			logger.info("Serial Port: {}", SERIAL_PORT);
+			logger.info("Serial Port: {}",
+					(SERIAL_PORT == null || SERIAL_PORT.trim().isEmpty()) ? "AUTO-DETECT" : SERIAL_PORT);
 			logger.info("Baud Rate: {}", BAUD_RATE);
 			logger.info("Firmware JSON: {}", FIRMWARE_JSON);
 			logger.info("Audit CSV: {}", AUDIT_CSV);

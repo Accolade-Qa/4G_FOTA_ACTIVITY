@@ -32,6 +32,8 @@ public class SerialReader {
 	private final BlockingQueue<String> processorQueue = new LinkedBlockingQueue<>(20000);
 	private final ConcurrentMap<String, ConcurrentMap<String, String>> stateMap = new ConcurrentHashMap<>();
 	private final StringBuilder lineBuffer = new StringBuilder();
+	private volatile boolean running = false;
+	private Thread inputThread;
 
 	private double lastDownloadProgress = 0.0;
 	private String lastSoftwareVersion = null;
@@ -39,6 +41,8 @@ public class SerialReader {
 	private String lastDeviceId = null;
 	private String lastDeviceState = null;
 	private LoginPacketInfo lastLoginPacketInfo = null;
+	// flag used to avoid overwriting the first login packet in a cycle
+	private boolean loginPacketCaptured = false;
 	private boolean aeplFwVerFound = false;
 
 	// optional resolver used to map state abbreviations to full names
@@ -70,11 +74,12 @@ public class SerialReader {
 			throw new RuntimeException(errMsg);
 		}
 		logger.info("Opened {}", connection.getSystemPortName());
+		running = true;
 
 		logWriter.start();
 
-		Thread inputThread = new Thread(this::terminalInputLoop, "terminal-input");
-		inputThread.setDaemon(false);
+		inputThread = new Thread(this::terminalInputLoop, "terminal-input");
+		inputThread.setDaemon(true);
 		inputThread.start();
 
 		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -87,6 +92,10 @@ public class SerialReader {
 	 * Gracefully closes the serial connection and stops the log writer.
 	 */
 	public void stop() {
+		running = false;
+		if (inputThread != null) {
+			inputThread.interrupt();
+		}
 		connection.close();
 		logWriter.close();
 	}
@@ -118,7 +127,11 @@ public class SerialReader {
 					}
 
 					processProgress(cleaned);
-					processInternalState(cleaned);
+					try {
+						processInternalState(cleaned);
+					} catch (Exception e) {
+						logger.error("[SR] Failed while processing line '{}': {}", cleaned, e.getMessage(), e);
+					}
 				}
 			}
 		}
@@ -156,7 +169,7 @@ public class SerialReader {
 			}
 
 			this.lastSoftwareVersion = info.version;
-			if (!info.software.equals("SOFTWARE") && !info.software.equals("FIRMWARE")) {
+			if (info.software != null && !info.software.equals("SOFTWARE") && !info.software.equals("FIRMWARE")) {
 				this.lastDeviceId = info.software;
 			}
 			
@@ -182,11 +195,8 @@ public class SerialReader {
 			}
 			
 			if (info.loginPacketInfo != null) {
-				this.lastLoginPacketInfo = info.loginPacketInfo;
-				// Trigger the creation of a separate serial log file with IMEI
-				if (info.loginPacketInfo.imei != null && !info.loginPacketInfo.imei.isEmpty()) {
-					logWriter.setImei(info.loginPacketInfo.imei);
-				}
+				// only capture the first login packet until state is reset
+				captureLoginPacket(info.loginPacketInfo);
 			}
 			putVersionIntoMap(info.state, info.software, info.version);
 		}
@@ -200,6 +210,10 @@ public class SerialReader {
 	 * @param version  The version string
 	 */
 	private void putVersionIntoMap(String state, String software, String version) {
+		if (state == null || software == null || version == null) {
+			logger.debug("[MAP-SKIP] state={} software={} version={}", state, software, version);
+			return;
+		}
 		stateMap.computeIfAbsent(state, k -> new ConcurrentHashMap<>()).put(software, version);
 		logger.debug("[MAP-UPDATE] state={} software={} version={}", state, software, version);
 	}
@@ -247,6 +261,7 @@ public class SerialReader {
 		this.lastDownloadProgress = 0.0;
 		this.lastDeviceState = null;
 		this.lastLoginPacketInfo = null;
+		this.loginPacketCaptured = false;
 		this.aeplFwVerFound = false;
 		parser.setDeviceState(null);
 		logger.info("[SR] State reset for new cycle.");
@@ -277,12 +292,28 @@ public class SerialReader {
 	}
 
 	/**
+	 * Internal helper used to record a login packet only once per cycle.  Subsequent
+	 * packets are ignored until {@link #resetState()} is invoked by the
+	 * orchestrator. This prevents intermediate reboot/login packets from
+	 * triggering a new automation cycle.
+	 */
+	void captureLoginPacket(LoginPacketInfo info) {
+		if (!loginPacketCaptured) {
+			this.lastLoginPacketInfo = info;
+			loginPacketCaptured = true;
+			if (info.imei != null && !info.imei.isEmpty()) {
+				logWriter.setImei(info.imei);
+			}
+		}
+	}
+
+	/**
 	 * Loop that monitors standard input for commands to be sent to the device.
 	 */
 	private void terminalInputLoop() {
 		try (Scanner scanner = new Scanner(System.in)) {
 			logger.info("[INPUT] Type commands. 'exit' to stop.");
-			while (true) {
+			while (running) {
 				if (!scanner.hasNextLine()) {
 					Thread.sleep(50);
 					continue;

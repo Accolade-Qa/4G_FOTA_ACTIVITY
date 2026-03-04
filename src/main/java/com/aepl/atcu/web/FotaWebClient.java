@@ -65,7 +65,7 @@ public class FotaWebClient implements AutoCloseable {
 		driver.get(url);
 
 		try {
-			((JavascriptExecutor) driver).executeScript("document.body.style.zoom='67%'");
+			((JavascriptExecutor) driver).executeScript("document.body.style.zoom='50%'");
 		} catch (Exception e) {
 			logger.warn("Failed to set zoom level: {}", e.getMessage());
 		}
@@ -137,7 +137,10 @@ public class FotaWebClient implements AutoCloseable {
 		logger.info("Batch creation form submitted.");
 		takeScreenshot("batch_submitted");
 
-		wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//*[contains(text(), 'FOTA Batch List')]")));
+		((JavascriptExecutor) driver).executeScript("window.scrollTo(0, document.body.scrollHeight);");
+		wait.until(ExpectedConditions.elementToBeClickable(By.xpath("//button[contains(text(), 'Start') or contains(text(), 'Run') or .//mat-icon[contains(text(), 'play')]]"))).click();
+
+		// wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//*[contains(text(), 'FOTA Batch List')]")));
 
 		return startFotaBatch(batchName);
 	}
@@ -149,6 +152,8 @@ public class FotaWebClient implements AutoCloseable {
 	 * @return True if the batch completes reaching 100% progress
 	 */
 	public boolean startFotaBatch(String targetBatchName) {
+		driver.navigate().back();
+		
 		logger.info("Starting FOTA batch for: {}", targetBatchName);
 
 		String rowXPath = String.format("//table/tbody/tr[td[contains(text(), '%s')]]", targetBatchName);

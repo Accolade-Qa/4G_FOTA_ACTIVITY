@@ -24,6 +24,7 @@ public class SerialConnection implements AutoCloseable {
     private static final long OPEN_RETRY_DELAY_MS = 1000L;
     private static final long ACTIVITY_PROBE_MS = 3000L;
     private static final long ACTIVITY_POLL_MS = 100L;
+    private static final long OPEN_ACTIVITY_VERIFY_MS = 5000L;
     private final String requestedPortName;
     private final int baudRate;
     private SerialPort port;
@@ -83,12 +84,23 @@ public class SerialConnection implements AutoCloseable {
             configurePort(candidate);
             for (int attempt = 1; attempt <= OPEN_RETRY_COUNT; attempt++) {
                 if (candidate.openPort()) {
+                    if (isAutoRequested() && !hasRecentActivity(candidate, OPEN_ACTIVITY_VERIFY_MS)) {
+                        logger.warn("Opened port {} but no activity detected within {} ms. Trying next candidate...",
+                                candidate.getSystemPortName(), OPEN_ACTIVITY_VERIFY_MS);
+                        try {
+                            candidate.closePort();
+                        } catch (Exception ignored) {
+                        }
+                        continue;
+                    }
                     this.port = candidate;
                     logger.info("Successfully opened port {} ({})", port.getSystemPortName(),
                             safeName(port.getDescriptivePortName()));
                     setupListener();
                     return true;
                 }
+                logger.warn("Open attempt failed for {} (errorCode={}, errorLocation={})",
+                        candidate.getSystemPortName(), candidate.getLastErrorCode(), candidate.getLastErrorLocation());
                 if (attempt < OPEN_RETRY_COUNT) {
                     logger.warn("Open failed for {} (attempt {}/{}). Retrying in {} ms...", candidate.getSystemPortName(),
                             attempt, OPEN_RETRY_COUNT, OPEN_RETRY_DELAY_MS);
@@ -195,14 +207,16 @@ public class SerialConnection implements AutoCloseable {
     public void close() {
         try {
             if (port != null) {
+                if (port.isOpen()) {
+                    port.closePort();
+                    logger.info("Closed port {}", port.getSystemPortName());
+                }
                 port.removeDataListener();
-            }
-            if (port != null && port.isOpen()) {
-                port.closePort();
-                logger.info("Closed port {}", port.getSystemPortName());
             }
         } catch (Exception e) {
             logger.error("Error closing port {}: {}", getPortName(), e.getMessage());
+        } finally {
+            port = null;
         }
     }
 
@@ -238,14 +252,39 @@ public class SerialConnection implements AutoCloseable {
         }
 
         List<SerialPort> ranked = new ArrayList<>();
+        List<SerialPort> bluetoothPorts = new ArrayList<>();
         for (SerialPort p : allPorts) {
             if (candidates.contains(p)) {
                 continue;
             }
+            if (isBluetoothPort(p)) {
+                bluetoothPorts.add(p);
+                continue;
+            }
+            if (!isLikelyPhysicalSerialPort(p)) {
+                logger.info("Skipping non-serial candidate in AUTO mode: {} ({})", p.getSystemPortName(),
+                        safeName(p.getDescriptivePortName()));
+                continue;
+            }
             ranked.add(p);
         }
+
+        // Fallback: if strict filtering removed everything, try non-Bluetooth ports.
+        if (ranked.isEmpty()) {
+            for (SerialPort p : allPorts) {
+                if (!isBluetoothPort(p)) {
+                    ranked.add(p);
+                }
+            }
+            logger.warn("No strict serial candidates found. Falling back to all non-Bluetooth ports.");
+        }
+
         ranked.sort(Comparator.comparingInt(this::portPriority).reversed());
         candidates.addAll(ranked);
+        if (!bluetoothPorts.isEmpty()) {
+            logger.info("Adding Bluetooth serial ports as fallback candidates.");
+            candidates.addAll(bluetoothPorts);
+        }
 
         logger.info("Serial port candidates (in order):");
         for (SerialPort p : candidates) {
@@ -309,6 +348,50 @@ public class SerialConnection implements AutoCloseable {
             score -= 30;
         }
         return score;
+    }
+
+    private boolean hasRecentActivity(SerialPort candidate, long timeoutMs) {
+        long end = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < end) {
+            int available = candidate.bytesAvailable();
+            if (available > 0) {
+                int toRead = Math.min(available, 512);
+                byte[] buffer = new byte[toRead];
+                int read = candidate.readBytes(buffer, buffer.length);
+                if (read > 0) {
+                    String chunk = new String(buffer, 0, read, StandardCharsets.UTF_8).trim();
+                    if (!chunk.isEmpty()) {
+                        return true;
+                    }
+                }
+            }
+            try {
+                Thread.sleep(ACTIVITY_POLL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private boolean isBluetoothPort(SerialPort p) {
+        String desc = safeName(p.getDescriptivePortName()).toLowerCase(Locale.ROOT);
+        String sys = safeName(p.getSystemPortName()).toLowerCase(Locale.ROOT);
+        return desc.contains("bluetooth") || desc.contains("bth") || sys.contains("bth");
+    }
+
+    private boolean isLikelyPhysicalSerialPort(SerialPort p) {
+        String desc = safeName(p.getDescriptivePortName()).toLowerCase(Locale.ROOT);
+        return desc.contains("usb")
+                || desc.contains("serial")
+                || desc.contains("uart")
+                || desc.contains("ttl")
+                || desc.contains("prolific")
+                || desc.contains("ch340")
+                || desc.contains("ftdi")
+                || desc.contains("cp210")
+                || desc.contains("silicon labs");
     }
 
     private String safeName(String value) {

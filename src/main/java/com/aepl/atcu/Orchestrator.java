@@ -70,9 +70,21 @@ public class Orchestrator {
      * @param loginJsonPath    Location where observed login packets will be saved
      * @throws Exception If initialization of serial components fails
      */
+    /**
+     * Primary constructor used by production code.  Creates its own
+     * {@link SerialReader} instance.
+     */
     public Orchestrator(String serialPort, int baud, String auditCsvPath, String firmwareJsonPath, 
             String defaultState, String loginJsonPath) throws Exception {
-        this.serialReader = new SerialReader(serialPort, baud);
+        this(new SerialReader(serialPort, baud), auditCsvPath, firmwareJsonPath, defaultState, loginJsonPath);
+    }
+
+    /**
+     * Package-private constructor allowing a custom reader (e.g. stub) for tests.
+     */
+    Orchestrator(SerialReader serialReader, String auditCsvPath, String firmwareJsonPath, 
+            String defaultState, String loginJsonPath) throws Exception {
+        this.serialReader = serialReader;
         this.auditCsvPath = auditCsvPath;
         this.resolver = new FirmwareResolver(firmwareJsonPath);
         // provide resolver to serial reader so it can map state abbrev during parsing
@@ -107,6 +119,7 @@ public class Orchestrator {
                 if (loginInfo == null) {
                     logger.error("Failed to get login packet within timeout. restarting cycle and waiting for new packet...");
                     serialReader.resetState();
+                    serialReader.sendCommand("*SET#CRST#1#");
                     continue;
                 }
 
@@ -115,6 +128,7 @@ public class Orchestrator {
                     logger.error("Invalid UIN received (must start with {}): {}. Rejecting device.",
                             UIN_PREFIX, loginInfo.uin);
                     serialReader.resetState();
+                    serialReader.sendCommand("*SET#CRST#1#");
                     continue;
                 }
                 // Validate IMEI is in proper format (13-15 digits)
@@ -122,6 +136,7 @@ public class Orchestrator {
                     logger.error("Invalid IMEI received (must be 13-15 digits): {}. Rejecting device.",
                             loginInfo.imei);
                     serialReader.resetState();
+                    serialReader.sendCommand("*SET#CRST#1#");
                     continue;
                 }
 
@@ -197,6 +212,14 @@ public class Orchestrator {
                     webSuccess = false;
                 }
 
+                if (!webSuccess) {
+                    logger.error("STEP 8 failed: batch was not created on portal. Skipping download monitoring for this cycle.");
+                    FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, nextVersion,
+                            "FAILED", "Web batch creation failed");
+                    Thread.sleep(1000);
+                    continue;
+                }
+
                 // STEP 9-10: Monitor for downloading completion
                 logger.info("STEP 9-10: Monitoring device for download completion...");
                 boolean downloadComplete = monitorDownloadProgress(batchName, nextVersion);
@@ -226,7 +249,10 @@ public class Orchestrator {
      * @param timeoutSeconds Maximum time to wait in seconds
      * @return LoginPacketInfo if received, null otherwise
      */
-    private LoginPacketInfo waitForLoginPacket(int timeoutSeconds) throws InterruptedException {
+    /*
+     * Package-private so tests may override behaviour.
+     */
+    LoginPacketInfo waitForLoginPacket(int timeoutSeconds) throws InterruptedException {
         long startTime = System.currentTimeMillis();
         long timeoutMs = timeoutSeconds * 1000L;
 
@@ -252,7 +278,12 @@ public class Orchestrator {
      * @param targetVersion Expected version after upgrade
      * @return True if download completed and version verified, false otherwise
      */
-    private boolean monitorDownloadProgress(String batchName, String targetVersion) throws InterruptedException {
+    /*
+     * Package-private so tests may exercise the complex post-download login
+     * logic.  This method now tolerates multiple reboot/login cycles until the
+     * device actually reports the desired targetVersion.
+     */
+    boolean monitorDownloadProgress(String batchName, String targetVersion) throws InterruptedException {
         int maxIterations = 1800; // allow up to 30 minutes at 1s granularity
         double lastProgress = -1;
         int stagnantCount = 0;
@@ -280,31 +311,43 @@ public class Orchestrator {
             }
 
             if (progress >= 100.0) {
-                logger.info("Download reached 100%. Waiting for reboot and next login packet...");
-                // no artificial sleep; wait for the packet itself
+                logger.info("Download reached 100%. Waiting for reboot and final login sequence...");
                 serialReader.resetState();
-                LoginPacketInfo newLogin = waitForLoginPacket(120);
 
-                if (newLogin != null) {
-                    // store the post-reboot login packet as well
-                    LoginPacketStore.persist(loginJsonPath, newLogin);
+                // after download completes the device will reboot several times as
+                // it applies the update; each reboot generates a login packet but
+                // the version field may not reflect the final target until the
+                // last reboot.  We therefore loop, collecting packets until we see
+                // the expected version or we hit an overall timeout.
+                long overallStart = System.currentTimeMillis();
+                final long overallTimeoutMs = 120 * 1000L; // 2 minutes
+                while ((System.currentTimeMillis() - overallStart) < overallTimeoutMs) {
+                    LoginPacketInfo newLogin = waitForLoginPacket(30);
+                    if (newLogin != null) {
+                        LoginPacketStore.persist(loginJsonPath, newLogin);
+                        if (targetVersion.equals(newLogin.version)) {
+                            logger.info("VERIFIED: Device rebooted successfully. New version: {}", newLogin.version);
+                            return true;
+                        } else {
+                            logger.info("Intermediate login packet version {} received, expecting {}. Waiting for next reboot...",
+                                    newLogin.version, targetVersion);
+                            // clear stored packet and keep waiting
+                            serialReader.resetState();
+                            continue;
+                        }
+                    }
+                    // if waitForLoginPacket returned null, just loop until overall
+                    // timeout elapses
                 }
-
-                if (newLogin != null && targetVersion.equals(newLogin.version)) {
-                    logger.info("VERIFIED: Device rebooted successfully. New version: {}", newLogin.version);
-                    return true;
-                } else {
-                    String actualVersion = newLogin != null ? newLogin.version : "UNKNOWN";
-                    logger.error("Version verification failed. Expected: {}, Got: {}", targetVersion, actualVersion);
-                    return false;
-                }
+                logger.error("Timeout waiting for login packet with target version {}", targetVersion);
+                return false;
             }
 
             Thread.sleep(1000);
         }
 
-		return false;
-	}
+        return false;
+    }
 
 	/**
 	 * Performs a graceful shutdown of all orchestrated components.
