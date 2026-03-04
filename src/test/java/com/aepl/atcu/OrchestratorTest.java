@@ -3,7 +3,6 @@ package com.aepl.atcu;
 import com.aepl.atcu.util.LoginPacketInfo;
 import org.junit.Test;
 
-import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.Queue;
 
@@ -13,16 +12,19 @@ public class OrchestratorTest {
 
     /**
      * Simple stub that allows us to emulate a series of login packets when
-     * waitForLoginPacket is invoked.  We also expose a mutable progress value.
+     * waitForLoginPacket is invoked. We also expose a mutable progress value.
      */
     static class StubSerialReader extends SerialReader {
         private double progress = 0.0;
+
         public StubSerialReader() {
             super("COM_TEST", 0);
         }
+
         void setProgress(double p) {
             this.progress = p;
         }
+
         @Override
         public double getLastDownloadProgress() {
             return progress;
@@ -34,7 +36,7 @@ public class OrchestratorTest {
         StubSerialReader stubReader;
 
         public TestOrchestrator(StubSerialReader reader, String auditCsv, String firmwareJson,
-                                String defaultState, String loginJson) throws Exception {
+                String defaultState, String loginJson) throws Exception {
             super(reader, auditCsv, firmwareJson, defaultState, loginJson);
             this.stubReader = reader;
         }
@@ -56,8 +58,8 @@ public class OrchestratorTest {
         TestOrchestrator orch = new TestOrchestrator(reader, "audit", "firmware.json", "XX", "login.json");
 
         // prepare wrong then right packet
-        LoginPacketInfo wrong = new LoginPacketInfo("i","c","u","1.0","v","m","s");
-        LoginPacketInfo right = new LoginPacketInfo("i","c","u","2.0","v","m","s");
+        LoginPacketInfo wrong = new LoginPacketInfo("i", "c", "u", "1.0", "v", "m", "s");
+        LoginPacketInfo right = new LoginPacketInfo("i", "c", "u", "2.0", "v", "m", "s");
         orch.queueLogin(wrong);
         orch.queueLogin(right);
 
@@ -74,7 +76,7 @@ public class OrchestratorTest {
         TestOrchestrator orch = new TestOrchestrator(reader, "audit", "firmware.json", "XX", "login.json");
 
         // queue only wrong version
-        LoginPacketInfo wrong = new LoginPacketInfo("i","c","u","1.0","v","m","s");
+        LoginPacketInfo wrong = new LoginPacketInfo("i", "c", "u", "1.0", "v", "m", "s");
         orch.queueLogin(wrong);
 
         reader.setProgress(100.0);
