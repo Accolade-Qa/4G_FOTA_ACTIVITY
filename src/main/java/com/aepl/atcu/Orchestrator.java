@@ -165,8 +165,33 @@ public class Orchestrator {
                 logger.info("Device Info - UIN: {}, IMEI: {}, VIN: {}, ICCID: {}, State: {}, Current Version: {}",
                         loginInfo.uin, loginInfo.imei, loginInfo.vin, loginInfo.iccid, deviceState, currentVer);
 
-                // STEP 5-6: Compare version with JSON, get next version
-                logger.info("STEP 5-6: Checking if device needs upgrade...");
+                // STEP 5: Validate that the device's current version exists in the servers.json
+                // for the reported state (critical check before preparing FOTA batch)
+                logger.info("STEP 5: Validating device version against state configuration...");
+                try {
+                    boolean versionExists = resolver.validateVersionExists(deviceState, currentVer);
+                    if (!versionExists) {
+                        logger.error("[VALIDATION FAILED] Device version '{}' is NOT found in servers.json for state '{}'. " +
+                                "Cannot proceed with FOTA batch preparation. Rejecting device.", currentVer, deviceState);
+                        FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, currentVer,
+                                "REJECTED", "Version not found in servers.json for state: " + deviceState);
+                        logger.info("Device {} rejected due to version mismatch", loginInfo.uin);
+                        serialReader.resetState();
+                        serialReader.sendCommand("*SET#CRST#1#");
+                        continue;
+                    }
+                    logger.info("Version validation PASSED - Device version '{}' is valid for state '{}'", currentVer, deviceState);
+                } catch (Exception e) {
+                    logger.error("[VALIDATION ERROR] Exception during version validation: {}", e.getMessage(), e);
+                    FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, currentVer,
+                            "ERROR", "Version validation error: " + e.getMessage());
+                    serialReader.resetState();
+                    serialReader.sendCommand("*SET#CRST#1#");
+                    continue;
+                }
+
+                // STEP 6: Compare version with JSON, get next version
+                logger.info("STEP 6: Checking if device needs upgrade...");
                 String nextVersion = resolver.resolveNextVersion(deviceState, currentVer);
 
                 if (nextVersion == null) {

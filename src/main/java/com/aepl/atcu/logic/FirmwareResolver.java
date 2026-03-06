@@ -38,6 +38,73 @@ public class FirmwareResolver {
     }
 
     /**
+     * Validates whether the current version exists in the servers.json
+     * configuration for the given state. This ensures the device's reported
+     * version is a known/valid version before proceeding with FOTA batch.
+     * 
+     * @param state          The device's state
+     * @param currentVersion The version currently on the device
+     * @return True if the version exists in the state's firmware list, false otherwise
+     * @throws IOException If the JSON mapping file is missing or unreadable
+     */
+    public boolean validateVersionExists(String state, String currentVersion) throws IOException {
+        logger.info("[RESOLVER] Validating if version '{}' exists in JSON for state: '{}'", currentVersion, state);
+        File jsonFile = new File(jsonPath);
+        if (!jsonFile.exists()) {
+            logger.error("[RESOLVER] Firmware JSON not found at: {}", jsonPath);
+            throw new IOException("Firmware JSON not found at: " + jsonPath);
+        }
+
+        JsonNode root = mapper.readTree(jsonFile);
+        if (!root.isArray()) {
+            logger.error("[RESOLVER] JSON root is not an array");
+            return false;
+        }
+
+        String normalizedState = (state == null) ? "" : state.trim();
+        String normalizedCurrent = (currentVersion == null) ? "" : currentVersion.trim();
+
+        for (JsonNode stateNode : root) {
+            String stateName = stateNode.get("state").asText().trim();
+            if (stateName.equalsIgnoreCase(normalizedState)) {
+                JsonNode firmwareArray = stateNode.get("firmware");
+                if (firmwareArray != null && firmwareArray.isArray()) {
+                    for (JsonNode fw : firmwareArray) {
+                        String filename = fw.get("fileName").asText().trim();
+                        String binaryVersion = extractVersionFromFilename(filename);
+                        if (isSameVersion(binaryVersion, normalizedCurrent)) {
+                            logger.info("[RESOLVER] Version '{}' FOUND in JSON for state '{}'", normalizedCurrent, stateName);
+                            return true;
+                        }
+                    }
+                    logger.warn("[RESOLVER] Version '{}' NOT FOUND in JSON for state '{}'. Available versions: {}",
+                            normalizedCurrent, stateName, getVersionsForState(stateNode));
+                    return false;
+                }
+            }
+        }
+
+        logger.warn("[RESOLVER] State '{}' not found in JSON", normalizedState);
+        return false;
+    }
+
+    /**
+     * Helper method to extract and log available versions for a state node.
+     */
+    private List<String> getVersionsForState(JsonNode stateNode) {
+        List<String> versions = new ArrayList<>();
+        JsonNode firmwareArray = stateNode.get("firmware");
+        if (firmwareArray != null && firmwareArray.isArray()) {
+            for (JsonNode fw : firmwareArray) {
+                String filename = fw.get("fileName").asText().trim();
+                String binaryVersion = extractVersionFromFilename(filename);
+                versions.add(binaryVersion);
+            }
+        }
+        return versions;
+    }
+
+    /**
      * Resolves the next target version based on state and current version.
      * 
      * @param state          The reported state of the device
