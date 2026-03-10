@@ -5,27 +5,17 @@
     </Properties>
 
     <Appenders>
-        <!-- Console appender for terminal output -->
+        <!-- Console appender for terminal output only -->
         <Console name="Console" target="SYSTEM_OUT">
             <PatternLayout pattern="%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n" />
         </Console>
 
-        <!-- Consolidated FOTA log appender - all logs go to the same file managed by LogWriter -->
-        <RollingFile name="FotaAppender" fileName="${basePath}/AUTO_FOTA.log"
-                     filePattern="${basePath}/AUTO_FOTA-%d{yyyy-MM-dd}.log">
-            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n" />
-            <Policies>
-                <TimeBasedTriggeringPolicy interval="1" modulate="true" />
-                <SizeBasedTriggeringPolicy size="50 MB" />
-            </Policies>
-            <DefaultRolloverStrategy max="10"/>
-        </RollingFile>
+        <!-- Removed FotaAppender to avoid duplicate logging with LogWriter -->
     </Appenders>
 
     <Loggers>
         <Root level="info">
             <AppenderRef ref="Console" />
-            <AppenderRef ref="FotaAppender" />
         </Root>
     </Loggers>
 </Configuration>

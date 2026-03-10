@@ -15,15 +15,6 @@ import java.util.concurrent.TimeUnit;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-/**
- * Handles the background logging of serial data.
- * It uses a producer-consumer pattern via a BlockingQueue to ensure that the
- * serial data parsing
- * is not blocked by I/O or formatting operations.
- * 
- * NOTE: Device lines are persisted in raw form; timestamp formatting is handled
- * by the logging configuration.
- */
 public class LogWriter implements AutoCloseable {
 
     private static final Logger logger = LogManager.getLogger(LogWriter.class);
@@ -34,9 +25,6 @@ public class LogWriter implements AutoCloseable {
     private final ExecutorService executor;
     private String logFilename = null;
 
-    /**
-     * Initializes the LogWriter with a single-threaded background executor.
-     */
     public LogWriter() {
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "log-writer");
@@ -46,10 +34,6 @@ public class LogWriter implements AutoCloseable {
         initializeDefaultSerialLog();
     }
 
-    /**
-     * Sets the IMEI and initializes the FOTA log filename.
-     * Format: AUTO_FOTA_{IMEI}_{DATE}.log
-     */
     public synchronized void setImei(String imei) {
         if (imei == null || imei.isEmpty())
             return;
@@ -62,18 +46,10 @@ public class LogWriter implements AutoCloseable {
         }
     }
 
-    /**
-     * Starts the background log-writing loop.
-     */
     public void start() {
         executor.submit(this::writeLoop);
     }
 
-    /**
-     * Enqueues a raw log line for processing.
-     * 
-     * @param line The raw string received from the device
-     */
     public void log(String line) {
         if (line != null && !line.isEmpty()) {
             boolean ok = queue.offer(line);
@@ -90,11 +66,6 @@ public class LogWriter implements AutoCloseable {
             ensureSerialFileExists();
             logger.info("FOTA log initialized: {}", logFilename);
         }
-    }
-
-    @SuppressWarnings("unused")
-    private static String buildTimestamp() {
-        return new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
     }
 
     private synchronized void ensureSerialFileExists() {
@@ -132,9 +103,6 @@ public class LogWriter implements AutoCloseable {
         }
     }
 
-    /**
-     * The continuous consumer loop that takes lines from the queue and logs them.
-     */
     private void writeLoop() {
         try {
             while (!Thread.currentThread().isInterrupted()) {
@@ -143,8 +111,6 @@ public class LogWriter implements AutoCloseable {
                 if (formatted.isEmpty()) {
                     continue;
                 }
-
-                // Write to program log (console + program_progress.log)
                 logger.info(formatted);
 
                 writeToSerialFile(formatted);
@@ -154,9 +120,6 @@ public class LogWriter implements AutoCloseable {
         }
     }
 
-    /**
-     * Shuts down the background executor gracefully.
-     */
     @Override
     public void close() {
         executor.shutdown();

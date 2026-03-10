@@ -11,28 +11,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Simple helper for persisting observed login packets into a JSON file.  The
- * file contains a JSON array of {@link LoginPacketInfo} objects, and new
- * entries are appended only if an identical packet (same UIN + version + IMEI)
- * isn't already present.
- *
- * This class is purposefully minimal so it can be used from the
- * {@link com.aepl.atcu.Orchestrator} without introducing heavy dependencies or
- * complexity.
- */
 public class LoginPacketStore {
     private static final Logger logger = LogManager.getLogger(LoginPacketStore.class);
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    /**
-     * Persist the given login packet info to disk.  If the file does not exist it
-     * will be created.  Existing entries are loaded and the new packet is added
-     * only if it doesn't already exist (UIN + version + IMEI match).
-     *
-     * @param path The path to the JSON file where packets are stored.
-     * @param info The login packet information to record.
-     */
     public static void persist(String path, LoginPacketInfo info) {
         if (path == null || info == null) {
             return;
@@ -68,11 +50,6 @@ public class LoginPacketStore {
             logger.error("Unable to persist login packet to {}: {}", path, e.getMessage(), e);
         }
     }
-
-    /**
-     * Loads all recorded login packets.  Returns an empty list if the file is
-     * missing or unreadable.
-     */
     public static List<LoginPacketInfo> loadAll(String path) {
         if (path == null) {
             return new ArrayList<>();

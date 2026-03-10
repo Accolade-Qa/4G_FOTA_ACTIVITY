@@ -2,21 +2,12 @@ package com.aepl.atcu.logic;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.aepl.atcu.Launcher;
 import com.aepl.atcu.util.LoginPacketInfo;
+import com.aepl.atcu.util.ValidationUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-/**
- * Logic class for parsing raw status messages and login packets from device
- * serial output.
- * It uses regular expressions to extract component versions, device states, and
- * download progress.
- * 
- * NOTE: The parser handles multiple formats, including key-value pairs
- * (SOFTWARE: value),
- * binary-mapped login packets (starting with 55AA), and ANSI escape sequence
- * stripping.
- */
 public class MessageParser {
 
 	private static final Logger logger = LogManager.getLogger(MessageParser.class);
@@ -28,57 +19,13 @@ public class MessageParser {
 	private static final Pattern VERSION_SIMPLE = Pattern.compile("\\d+\\.\\d+(?:\\.\\d+)*");
 	private static final Pattern FW_VER_PATTERN = Pattern.compile("(?i)aeplFwVer[:=\\s]+([^\\s,;]+)");
 	private static final Pattern DOWNLOAD_PATTERN = Pattern.compile("(?i)\\[FOT\\] downloading\\s+([\\d.]+)%");
-	private static final String UIN_PREFIX = "ACON";
-	private static final Pattern IMEI_PATTERN = Pattern.compile("^\\d{13,15}$");
 
-	// Optional state to use when creating LoginPacketInfo from serial login packets
-	private String deviceState = null;
-
-	/**
-	 * Validates if the UIN starts with the required prefix (ACON).
-	 * 
-	 * @param uin The UIN to validate
-	 * @return True if UIN is valid, false otherwise
-	 */
-	private static boolean isValidUin(String uin) {
-		return uin != null && !uin.isEmpty() && uin.startsWith(UIN_PREFIX);
-	}
-
-	/**
-	 * Validates if the IMEI is in valid format (13-15 digits).
-	 * 
-	 * @param imei The IMEI to validate
-	 * @return True if IMEI is valid, false otherwise
-	 */
-	private static boolean isValidImei(String imei) {
-		return imei != null && !imei.isEmpty() && IMEI_PATTERN.matcher(imei).matches();
-	}
-
-	/**
-	 * Sets the current device state captured from serial logs.
-	 * This state will be used when creating LoginPacketInfo from login packets.
-	 * 
-	 * @param state The device state to use
-	 */
-	public void setDeviceState(String state) {
-		this.deviceState = state;
-	}
-
-	/**
-	 * Removes ANSI escape codes (colors/formatting) from a string.
-	 * 
-	 * @param input The raw string from serial
-	 * @return Cleaned string without control characters
-	 */
 	public String stripAnsi(String input) {
 		if (input == null)
 			return null;
 		return ANSI_ESCAPE.matcher(input).replaceAll("");
 	}
 
-	/**
-	 * Data structure containing parsed device information.
-	 */
 	public static class ParsedInfo {
 		public final String state;
 		public final String software;
@@ -99,17 +46,10 @@ public class MessageParser {
 		}
 	}
 
-	/**
-	 * Parses a single line of text to identify device version or state information.
-	 * 
-	 * @param line The log line to analyze
-	 * @return A ParsedInfo object if data was found, null otherwise
-	 */
 	public ParsedInfo parse(String line) {
 		if (line == null || line.isEmpty())
 			return null;
 
-		// special case: statewise protocol lines may contain a two-letter state abbreviation
 		if (line.toLowerCase().contains("statewise")) {
 			// capture the last two-letter uppercase abbreviation, e.g. "MH" in the line
 			Matcher m = Pattern.compile("\\b([A-Z]{2})\\b").matcher(line);
@@ -159,12 +99,6 @@ public class MessageParser {
 		return null;
 	}
 
-	/**
-	 * Extracts FOTA download progress percentage from a log line.
-	 * 
-	 * @param line The device log line
-	 * @return Progress as a Double (0-100), or null if not found
-	 */
 	public Double parseDownloadProgress(String line) {
 		if (line == null)
 			return null;
@@ -178,13 +112,6 @@ public class MessageParser {
 		}
 		return null;
 	}
-
-	/**
-	 * Internal method to parse the comma-separated 55AA login packets.
-	 * 
-	 * @param line Raw data line
-	 * @return ParsedInfo containing a nested LoginPacketInfo
-	 */
 	private ParsedInfo parseLoginPacket(String line) {
 		String payload = line;
 		if (payload.contains("|")) {
@@ -205,25 +132,26 @@ public class MessageParser {
 			String foundVersion = parts.length > 7 ? parts[7].trim() : "";
 			String vin = parts.length > 8 ? parts[8].trim() : "";
 
-			// Validate UIN and IMEI before creating LoginPacketInfo
-			if (!isValidUin(UIN)) {
+			if (!ValidationUtils.isValidUin(UIN)) {
 				logger.warn("[PARSER] Invalid UIN (must start with {}): {}. Skipping login packet.",
-						UIN_PREFIX, UIN);
+						"ACON", UIN);
 				return null;
 			}
-			
-			if (!isValidImei(imei)) {
+
+			if (!ValidationUtils.isValidImei(imei)) {
 				logger.warn("[PARSER] Invalid IMEI (must be 13-15 digits): {}. Skipping login packet.",
 						imei);
 				return null;
 			}
 
 			if (!foundVersion.isEmpty()) {
-				// Use the captured device state (if available) instead of null
-				// This ensures the login packet is created with the actual device state
-				String stateForPacket = (deviceState != null && !deviceState.isEmpty()) ? deviceState : null;
-				LoginPacketInfo loginInfo = new LoginPacketInfo(imei, iccid, UIN, foundVersion, vin, null, stateForPacket);
-				logger.info("[PARSER] Valid login packet: UIN={}, IMEI={}, Version={}, State={}", UIN, imei, foundVersion, stateForPacket);
+				String stateForPacket = (Launcher.getCurrentState() != null && !Launcher.getCurrentState().isEmpty())
+						? Launcher.getCurrentState()
+						: null;
+				LoginPacketInfo loginInfo = new LoginPacketInfo(imei, iccid, UIN, foundVersion, vin, null,
+						stateForPacket);
+				logger.info("[PARSER] Valid login packet: UIN={}, IMEI={}, Version={}, State={}", UIN, imei,
+						foundVersion, stateForPacket);
 				return new ParsedInfo("LOGIN", UIN, foundVersion, loginInfo);
 			}
 		}
@@ -237,13 +165,6 @@ public class MessageParser {
 		return null;
 	}
 
-	/**
-	 * Utility to extract a regex group from a string.
-	 * 
-	 * @param pattern Compiled pattern with one capture group
-	 * @param input   Text to search
-	 * @return Trimmed capture group or null
-	 */
 	private static String extractToken(Pattern pattern, String input) {
 		if (input == null)
 			return null;

@@ -6,27 +6,34 @@ import java.nio.file.Paths;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-/**
- * Entry point for the FOTA (Firmware Over-The-Air) Automation tool.
- * Configures hard-coded parameters and orchestrates the FOTA automation process.
- */
 public class Launcher {
 	private static final Logger logger = LogManager.getLogger(Launcher.class);
-
-	// Hard-coded configuration values
-	// Keep blank/null to auto-detect active serial port at startup.
+	private static String currentState = null;
+	private static final String DEFAULT_STATE = "Delhi";
 	private static final String SERIAL_PORT = "";
 	private static final int BAUD_RATE = 115200;
-
 	private static final String FIRMWARE_JSON = "input/servers.json";
 	private static final String AUDIT_CSV = "results/fota_audit.csv";
 	private static final String LOGIN_JSON = "results/login_packets.json";
-
 	private static final String PORTAL_URL = "http://aepl-tcu4g-qa.accoladeelectronics.com:6102/login";
 	private static final String PORTAL_USER = "suraj.bhalerao@accoladeelectronics.com";
 	private static final String PORTAL_PASS = "79hqelye";
 
-	private static final String DEFAULT_STATE = "Default";
+	public static String getDefaultState() {
+		return DEFAULT_STATE;
+	}
+
+	public static String getCurrentState() {
+		return currentState;
+	}
+
+	public static void setCurrentState(String state) {
+		currentState = state;
+	}
+
+
+
+
 
 	public static void main(String[] args) {
 		setupDirectories();
@@ -41,8 +48,7 @@ public class Launcher {
 			logger.info("Portal URL: {}", PORTAL_URL);
 			logger.info("Default State: {}", DEFAULT_STATE);
 
-			Orchestrator orch = new Orchestrator(SERIAL_PORT, BAUD_RATE, AUDIT_CSV, FIRMWARE_JSON,
-					DEFAULT_STATE, LOGIN_JSON);
+			Orchestrator orch = new Orchestrator(SERIAL_PORT, BAUD_RATE, AUDIT_CSV, FIRMWARE_JSON, LOGIN_JSON);
 			orch.start(PORTAL_URL, PORTAL_USER, PORTAL_PASS);
 		} catch (Exception e) {
 			logger.fatal("Fatal error starting orchestrator: {}", e.getMessage(), e);
@@ -52,9 +58,6 @@ public class Launcher {
 		}
 	}
 
-	/**
-	 * Ensures required directories exist.
-	 */
 	private static void setupDirectories() {
 		String[] dirs = { "input", "output", "logs", "results", "screenshots" };
 		for (String dir : dirs) {

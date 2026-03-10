@@ -34,90 +34,51 @@ public class Orchestrator {
     private static final java.util.regex.Pattern IMEI_PATTERN = java.util.regex.Pattern.compile("^\\d{13,15}$");
     private final SerialReader serialReader;
     private FotaWebClient webClient;
-    private final String auditCsvPath;
     private final FirmwareResolver resolver;
-    private final String defaultState;
-    private final String loginJsonPath; // file where we persist observed login packets
+    private final String auditCsvPath;
+    private final String loginJsonPath;
 
-	/**
-	 * Validates if the UIN starts with the required prefix (ACON).
-	 * 
-	 * @param uin The UIN to validate
-	 * @return True if UIN starts with ACON, false otherwise
-	 */
-	private static boolean isValidUin(String uin) {
-		return uin != null && uin.startsWith(UIN_PREFIX);
-	}
-
-	/**
-	 * Validates if the IMEI is in valid format (13-15 digits).
-	 * 
-	 * @param imei The IMEI to validate
-	 * @return True if IMEI is valid, false otherwise
-	 */
-	private static boolean isValidImei(String imei) {
-		return imei != null && !imei.isEmpty() && IMEI_PATTERN.matcher(imei).matches();
-	}
-
-	/**
-	 * Constructs the Orchestrator with required configuration paths.
-	 * 
-	 * @param serialPort       The COM port for device serial communication
-	 * @param baud             The baud rate for serial communication
-	 * @param auditCsvPath     Path where audit reports are stored
-	 * @param firmwareJsonPath Path to the JSON file containing version mappings
-	 * @param defaultState     The fallback state to use if device reports 'Default'
-     * @param loginJsonPath    Location where observed login packets will be saved
-     * @throws Exception If initialization of serial components fails
-     */
-    /**
-     * Primary constructor used by production code.  Creates its own
-     * {@link SerialReader} instance.
-     */
-    public Orchestrator(String serialPort, int baud, String auditCsvPath, String firmwareJsonPath, 
-            String defaultState, String loginJsonPath) throws Exception {
-        this(new SerialReader(serialPort, baud), auditCsvPath, firmwareJsonPath, defaultState, loginJsonPath);
+    private static boolean isValidUin(String uin) {
+        return uin != null && uin.startsWith(UIN_PREFIX);
     }
 
-    /**
-     * Package-private constructor allowing a custom reader (e.g. stub) for tests.
-     */
-    Orchestrator(SerialReader serialReader, String auditCsvPath, String firmwareJsonPath, 
-            String defaultState, String loginJsonPath) throws Exception {
+    private static boolean isValidImei(String imei) {
+        return imei != null && !imei.isEmpty() && IMEI_PATTERN.matcher(imei).matches();
+    }
+
+    public Orchestrator(String serialPort, int baud, String auditCsvPath, String firmwareJsonPath,
+            String loginJsonPath) throws Exception {
+        this(new SerialReader(serialPort, baud), auditCsvPath, firmwareJsonPath, loginJsonPath);
+    }
+
+    Orchestrator(SerialReader serialReader, String auditCsvPath, String firmwareJsonPath,
+            String loginJsonPath) throws Exception {
         this.serialReader = serialReader;
         this.auditCsvPath = auditCsvPath;
         this.resolver = new FirmwareResolver(firmwareJsonPath);
-        // provide resolver to serial reader so it can map state abbrev during parsing
-        this.serialReader.setStateResolver(this.resolver);
-        this.defaultState = defaultState;
-        this.loginJsonPath = (loginJsonPath == null || loginJsonPath.isEmpty()) ? "results/login_packets.json" : loginJsonPath;
+        this.loginJsonPath = (loginJsonPath == null || loginJsonPath.isEmpty()) ? "results/login_packets.json"
+                : loginJsonPath;
     }
 
-	/**
-	 * Starts the simplified FOTA automation loop.
-	 * 
-	 * @param loginUrl URL for the FOTA web portal
-	 * @param user     Username for web portal authentication
-	 * @param pass     Password for web portal authentication
-	 * @throws Exception If a fatal error occurs during orchestration
-	 */
-	public void start(String loginUrl, String user, String pass) throws Exception {
-		try {
-			// Step 1: Initialize serial communication
-			logger.info("===== FOTA AUTOMATION START =====");
-			serialReader.start();
+    public void start(String loginUrl, String user, String pass) throws Exception {
+        try {
+            // Step 1: Initialize serial communication
+            logger.info("===== FOTA AUTOMATION START =====");
+            serialReader.start();
 
-			// Step 2..12: Main FOTA cycle
-			while (true) {
-				logger.info("\n--- Starting New Device Upgrade Cycle ---");
-				serialReader.resetState();
+            // Step 2..12: Main FOTA cycle
+            while (true) {
+                logger.info("\n--- Starting New Device Upgrade Cycle ---");
+                serialReader.resetState();
 
-				// STEP 1-3: Read serial logs, fire OTA command, observe login packet
-				logger.info("STEP 1-3: Waiting for login packet from device (timeout: 180s)...");
-				LoginPacketInfo loginInfo = waitForLoginPacket(180);
+                // STEP 1-3: Read serial logs, fire OTA command, observe login packet
+                logger.info("STEP 1-3: Waiting for login packet from device (timeout: 180s)...");
+                serialReader.sendCommand("*SET#CRST#1#");
+                LoginPacketInfo loginInfo = waitForLoginPacket(180);
 
                 if (loginInfo == null) {
-                    logger.error("Failed to get login packet within timeout. restarting cycle and waiting for new packet...");
+                    logger.error(
+                            "Failed to get login packet within timeout. restarting cycle and waiting for new packet...");
                     serialReader.resetState();
                     serialReader.sendCommand("*SET#CRST#1#");
                     continue;
@@ -125,18 +86,12 @@ public class Orchestrator {
 
                 // Validate UIN starts with ACON
                 if (!isValidUin(loginInfo.uin)) {
-                    logger.error("Invalid UIN received (must start with {}): {}. Rejecting device.",
-                            UIN_PREFIX, loginInfo.uin);
-                    serialReader.resetState();
-                    serialReader.sendCommand("*SET#CRST#1#");
+                    rejectDevice(loginInfo, "Invalid UIN (must start with " + UIN_PREFIX + "): " + loginInfo.uin);
                     continue;
                 }
                 // Validate IMEI is in proper format (13-15 digits)
                 if (!isValidImei(loginInfo.imei)) {
-                    logger.error("Invalid IMEI received (must be 13-15 digits): {}. Rejecting device.",
-                            loginInfo.imei);
-                    serialReader.resetState();
-                    serialReader.sendCommand("*SET#CRST#1#");
+                    rejectDevice(loginInfo, "Invalid IMEI (must be 13-15 digits): " + loginInfo.imei);
                     continue;
                 }
 
@@ -145,21 +100,10 @@ public class Orchestrator {
                 LoginPacketStore.persist(loginJsonPath, loginInfo);
 
                 String currentVer = loginInfo.version;
-                // interpret state abbreviation if necessary
+                // Determine device state (use default if not provided)
                 String deviceState = loginInfo.state;
-                if (deviceState != null && resolver != null) {
-                    try {
-                        String mapped = resolver.resolveStateName(deviceState);
-                        if (mapped != null) {
-                            deviceState = mapped;
-                            logger.info("[ORCH] Mapped state abbreviation '{}' to '{}'", loginInfo.state, deviceState);
-                        }
-                    } catch (Exception e) {
-                        logger.warn("[ORCH] Error mapping state '{}': {}", deviceState, e.getMessage());
-                    }
-                }
-                if (deviceState == null || "Default".equalsIgnoreCase(deviceState)) {
-                    deviceState = defaultState;
+                if (deviceState == null || deviceState.trim().isEmpty() || "Default".equalsIgnoreCase(deviceState)) {
+                    deviceState = Launcher.getDefaultState();
                 }
 
                 logger.info("Device Info - UIN: {}, IMEI: {}, VIN: {}, ICCID: {}, State: {}, Current Version: {}",
@@ -171,8 +115,11 @@ public class Orchestrator {
                 try {
                     boolean versionExists = resolver.validateVersionExists(deviceState, currentVer);
                     if (!versionExists) {
-                        logger.error("[VALIDATION FAILED] Device version '{}' is NOT found in servers.json for state '{}'. " +
-                                "Cannot proceed with FOTA batch preparation. Rejecting device.", currentVer, deviceState);
+                        logger.error(
+                                "[VALIDATION FAILED] Device version '{}' is NOT found in servers.json for state '{}'. "
+                                        +
+                                        "Cannot proceed with FOTA batch preparation. Rejecting device.",
+                                currentVer, deviceState);
                         FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, currentVer,
                                 "REJECTED", "Version not found in servers.json for state: " + deviceState);
                         logger.info("Device {} rejected due to version mismatch", loginInfo.uin);
@@ -180,13 +127,10 @@ public class Orchestrator {
                         serialReader.sendCommand("*SET#CRST#1#");
                         continue;
                     }
-                    logger.info("Version validation PASSED - Device version '{}' is valid for state '{}'", currentVer, deviceState);
+                    logger.info("Version validation PASSED - Device version '{}' is valid for state '{}'", currentVer,
+                            deviceState);
                 } catch (Exception e) {
-                    logger.error("[VALIDATION ERROR] Exception during version validation: {}", e.getMessage(), e);
-                    FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, currentVer,
-                            "ERROR", "Version validation error: " + e.getMessage());
-                    serialReader.resetState();
-                    serialReader.sendCommand("*SET#CRST#1#");
+                    handleValidationError(loginInfo, e);
                     continue;
                 }
 
@@ -208,7 +152,8 @@ public class Orchestrator {
                 logger.info("STEP 7: Preparing FOTA batch...");
                 String timestamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
                 String outputFileName = "fota_batch_" + timestamp + ".csv";
-                String outputPath = java.nio.file.Paths.get("output").resolve(outputFileName).toAbsolutePath().toString();
+                String outputPath = java.nio.file.Paths.get("output").resolve(outputFileName).toAbsolutePath()
+                        .toString();
 
                 List<LoginPacketInfo> batchList = new ArrayList<>();
                 LoginPacketInfo batchInfo = new LoginPacketInfo(loginInfo.imei, loginInfo.iccid, loginInfo.uin,
@@ -238,10 +183,7 @@ public class Orchestrator {
                 }
 
                 if (!webSuccess) {
-                    logger.error("STEP 8 failed: batch was not created on portal. Skipping download monitoring for this cycle.");
-                    FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, nextVersion,
-                            "FAILED", "Web batch creation failed");
-                    Thread.sleep(1000);
+                    handleWebFailure(loginInfo, currentVer, nextVersion);
                     continue;
                 }
 
@@ -250,9 +192,7 @@ public class Orchestrator {
                 boolean downloadComplete = monitorDownloadProgress(batchName, nextVersion);
 
                 if (!downloadComplete) {
-                    logger.error("Download did not complete successfully");
-                    FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, nextVersion,
-                            "FAILED", "Download monitoring timeout or incomplete");
+                    handleDownloadFailure(loginInfo, currentVer, nextVersion);
                 } else {
                     logger.info("FOTA upgrade successful to version: {}", nextVersion);
                     FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, nextVersion,
@@ -269,14 +209,6 @@ public class Orchestrator {
         }
     }
 
-    /**
-     * Waits for a complete login packet from the device.
-     * @param timeoutSeconds Maximum time to wait in seconds
-     * @return LoginPacketInfo if received, null otherwise
-     */
-    /*
-     * Package-private so tests may override behaviour.
-     */
     LoginPacketInfo waitForLoginPacket(int timeoutSeconds) throws InterruptedException {
         long startTime = System.currentTimeMillis();
         long timeoutMs = timeoutSeconds * 1000L;
@@ -294,25 +226,11 @@ public class Orchestrator {
         return null;
     }
 
-    /**
-     * Monitors serial output for download completion (100%).
-     * STEP 9: Observe logs for downloading progress
-     * STEP 10: When downloading reaches 100%, device reboots once
-     *
-     * @param batchName Name of the batch being monitored
-     * @param targetVersion Expected version after upgrade
-     * @return True if download completed and version verified, false otherwise
-     */
-    /*
-     * Package-private so tests may exercise the complex post-download login
-     * logic.  This method now tolerates multiple reboot/login cycles until the
-     * device actually reports the desired targetVersion.
-     */
     boolean monitorDownloadProgress(String batchName, String targetVersion) throws InterruptedException {
-        int maxIterations = 1800; // allow up to 30 minutes at 1s granularity
+        int maxIterations = 1800;
         double lastProgress = -1;
         int stagnantCount = 0;
-        final int MAX_STAGNANT = 120; // 2 minutes stuck
+        final int MAX_STAGNANT = 120;
 
         for (int i = 0; i < maxIterations; i++) {
             double progress = serialReader.getLastDownloadProgress();
@@ -338,14 +256,8 @@ public class Orchestrator {
             if (progress >= 100.0) {
                 logger.info("Download reached 100%. Waiting for reboot and final login sequence...");
                 serialReader.resetState();
-
-                // after download completes the device will reboot several times as
-                // it applies the update; each reboot generates a login packet but
-                // the version field may not reflect the final target until the
-                // last reboot.  We therefore loop, collecting packets until we see
-                // the expected version or we hit an overall timeout.
                 long overallStart = System.currentTimeMillis();
-                final long overallTimeoutMs = 120 * 1000L; // 2 minutes
+                final long overallTimeoutMs = 120 * 1000L;
                 while ((System.currentTimeMillis() - overallStart) < overallTimeoutMs) {
                     LoginPacketInfo newLogin = waitForLoginPacket(30);
                     if (newLogin != null) {
@@ -354,15 +266,13 @@ public class Orchestrator {
                             logger.info("VERIFIED: Device rebooted successfully. New version: {}", newLogin.version);
                             return true;
                         } else {
-                            logger.info("Intermediate login packet version {} received, expecting {}. Waiting for next reboot...",
+                            logger.info(
+                                    "Intermediate login packet version {} received, expecting {}. Waiting for next reboot...",
                                     newLogin.version, targetVersion);
-                            // clear stored packet and keep waiting
                             serialReader.resetState();
                             continue;
                         }
                     }
-                    // if waitForLoginPacket returned null, just loop until overall
-                    // timeout elapses
                 }
                 logger.error("Timeout waiting for login packet with target version {}", targetVersion);
                 return false;
@@ -374,16 +284,54 @@ public class Orchestrator {
         return false;
     }
 
-	/**
-	 * Performs a graceful shutdown of all orchestrated components.
-	 */
-	public void shutdown() {
-		try {
-			if (serialReader != null)
-				serialReader.stop();
-			if (webClient != null)
-				webClient.close();
-		} catch (Exception ignored) {
-		}
-	}
+    /**
+     * Rejects a device due to validation failure and prepares for next cycle.
+     */
+    private void rejectDevice(LoginPacketInfo loginInfo, String reason) throws Exception {
+        logger.error("Rejecting device {}: {}", loginInfo.uin, reason);
+        FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, loginInfo.version, loginInfo.version,
+                "REJECTED", reason);
+        serialReader.resetState();
+        serialReader.sendCommand("*SET#CRST#1#");
+    }
+
+    /**
+     * Handles validation errors during version checking.
+     */
+    private void handleValidationError(LoginPacketInfo loginInfo, Exception e) throws Exception {
+        logger.error("[VALIDATION ERROR] Exception during version validation: {}", e.getMessage(), e);
+        FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, loginInfo.version, loginInfo.version,
+                "ERROR", "Version validation error: " + e.getMessage());
+        serialReader.resetState();
+        serialReader.sendCommand("*SET#CRST#1#");
+    }
+
+    /**
+     * Handles web batch creation failures.
+     */
+    private void handleWebFailure(LoginPacketInfo loginInfo, String currentVer, String nextVersion) throws Exception {
+        logger.error("Web batch creation failed for device {}", loginInfo.uin);
+        FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, nextVersion,
+                "FAILED", "Web batch creation failed");
+        Thread.sleep(1000);
+    }
+
+    /**
+     * Handles download monitoring failures.
+     */
+    private void handleDownloadFailure(LoginPacketInfo loginInfo, String currentVer, String nextVersion) throws Exception {
+        logger.error("Download monitoring failed for device {}", loginInfo.uin);
+        FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, nextVersion,
+                "FAILED", "Download monitoring timeout or incomplete");
+    }
+
+    public void shutdown() {
+        try {
+            if (serialReader != null)
+                serialReader.stop();
+            if (webClient != null)
+                webClient.close();
+        } catch (Exception ignored) {
+        }
+    }
 }

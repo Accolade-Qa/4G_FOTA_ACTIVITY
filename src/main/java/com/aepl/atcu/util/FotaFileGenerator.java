@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVPrinter;
@@ -17,38 +16,11 @@ import org.apache.commons.csv.CSVRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-/**
- * Utility class for generating and manipulating CSV files for FOTA batch
- * uploads.
- * It provides methods to read source CSVs, increment versions, and generate
- * audit reports.
- * 
- * NOTE: This class uses Apache Commons CSV for robust CSV parsing and printing.
- */
 public class FotaFileGenerator {
 
 	private static final Logger logger = LogManager.getLogger(FotaFileGenerator.class);
-	private static final String UIN_PREFIX = "ACON";
 
-	/**
-	 * Validates if the UIN starts with the required prefix (ACON).
-	 * 
-	 * @param uin The UIN to validate
-	 * @return True if UIN starts with ACON, false otherwise
-	 */
-	private static boolean isValidUin(String uin) {
-		return uin != null && uin.startsWith(UIN_PREFIX);
-	}
 
-	/**
-	 * Reads a source CSV, increments the version (UFW) for each entry, and writes a
-	 * new CSV.
-	 * 
-	 * @param sourceCsvPath Path to the input CSV file
-	 * @param outputCsvPath Path where the generated batch CSV should be saved
-	 * @return Absolute path of the generated file
-	 * @throws IOException If file I/O operations fail
-	 */
 	public static String generateBatchFile(String sourceCsvPath, String outputCsvPath) throws IOException {
 		logger.info("[GEN] Reading source CSV: {}", sourceCsvPath);
 
@@ -62,8 +34,8 @@ public class FotaFileGenerator {
 			String uin = record.isMapped("UIN") ? record.get("UIN") : "Unknown";
 			
 			// Validate UIN starts with ACON
-			if (!isValidUin(uin)) {
-				logger.warn("[GEN] Skipping record with invalid UIN (must start with {}): {}", UIN_PREFIX, uin);
+			if (!ValidationUtils.isValidUin(uin)) {
+				logger.warn("[GEN] Skipping record with invalid UIN (must start with {}): {}", "ACON", uin);
 				continue;
 			}
 			
@@ -97,16 +69,7 @@ public class FotaFileGenerator {
 		return Paths.get(outputCsvPath).toAbsolutePath().toString();
 	}
 
-	/**
-	 * Generates a batch file where the UFW version is explicitly set for all
-	 * records.
-	 * 
-	 * @param sourceCsvPath Path to the input CSV
-	 * @param outputCsvPath Path for the output CSV
-	 * @param targetVersion The version string to apply to all records
-	 * @return Absolute path of the generated file
-	 * @throws IOException If file I/O operations fail
-	 */
+
 	public static String generateBatchFileWithExplicitVersion(String sourceCsvPath, String outputCsvPath,
 			String targetVersion) throws IOException {
 		logger.info("[GEN] Reading source CSV: {} using target version: {}", sourceCsvPath, targetVersion);
@@ -121,8 +84,8 @@ public class FotaFileGenerator {
 			String uin = record.isMapped("UIN") ? record.get("UIN") : "Unknown";
 			
 			// Validate UIN starts with ACON
-			if (!isValidUin(uin)) {
-				logger.warn("[GEN] Skipping record with invalid UIN (must start with {}): {}", UIN_PREFIX, uin);
+			if (!ValidationUtils.isValidUin(uin)) {
+				logger.warn("[GEN] Skipping record with invalid UIN (must start with {}): {}", "ACON", uin);
 				continue;
 			}
 			
@@ -149,16 +112,9 @@ public class FotaFileGenerator {
 		return Paths.get(outputCsvPath).toAbsolutePath().toString();
 	}
 
-	/**
-	 * Converts a list of LoginPacketInfo objects into a batch upload CSV.
-	 * 
-	 * @param infos         List of parsed login packets
-	 * @param outputCsvPath Target file path
-	 * @return Absolute path of the generated file
-	 * @throws IOException If file I/O operations fail
-	 */
+
 	public static String writeLoginPacketInfoCsv(List<LoginPacketInfo> infos, String outputCsvPath) throws IOException {
-		String[] headers = { "UIN", "UFW", "MODEL", "STATE", "IMEI" };
+		String[] headers = { "UIN", "UFW", "MODEL", "IMEI" };
 		FileWriter out = new FileWriter(outputCsvPath);
 		CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.builder().setHeader(headers).build());
 		for (LoginPacketInfo info : infos) {
@@ -168,16 +124,7 @@ public class FotaFileGenerator {
 		return Paths.get(outputCsvPath).toAbsolutePath().toString();
 	}
 
-	/**
-	 * Automatically increments the version number found at the end of a UFW string.
-	 * Example: 5.2.8_TST03 -> 5.2.8_TST04.
-	 * 
-	 * NOTE: This method preserves leading zeros to maintain padding (e.g., 09
-	 * becomes 10).
-	 * 
-	 * @param ufw The original version string
-	 * @return The incremented version string
-	 */
+
 	public static String incrementUfw(String ufw) {
 		if (ufw == null || ufw.isEmpty())
 			return ufw;
@@ -195,17 +142,6 @@ public class FotaFileGenerator {
 		return ufw + "_1";
 	}
 
-	/**
-	 * Appends a record to the FOTA audit report CSV.
-	 * 
-	 * @param auditCsvPath Path to the audit report file
-	 * @param uin          Device UIN
-	 * @param prevVer      Version before upgrade
-	 * @param nextVer      Target version for upgrade
-	 * @param status       Status of the operation (SUCCESS/FAILURE)
-	 * @param error        Detailed error message if applicable
-	 * @throws IOException If file I/O operations fail
-	 */
 	public static void writeAuditReport(String auditCsvPath, String uin, String prevVer, String nextVer, String status,
 			String error) throws IOException {
 		String[] headers = { "Timestamp", "UIN", "Previous_Version", "Target_Version", "Status", "Details" };
