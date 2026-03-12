@@ -73,14 +73,14 @@ public class Orchestrator {
 
                 // STEP 1-3: Read serial logs, fire OTA command, observe login packet
                 logger.info("STEP 1-3: Waiting for login packet from device (timeout: 180s)...");
-                serialReader.sendCommand("*SET#CRST#1#");
+                // serialReader.sendCommand("*SET#CRST#1#");
                 LoginPacketInfo loginInfo = waitForLoginPacket(180);
 
                 if (loginInfo == null) {
                     logger.error(
                             "Failed to get login packet within timeout. restarting cycle and waiting for new packet...");
                     serialReader.resetState();
-                    serialReader.sendCommand("*SET#CRST#1#");
+                    // serialReader.sendCommand("*SET#CRST#1#");
                     continue;
                 }
 
@@ -124,7 +124,7 @@ public class Orchestrator {
                                 "REJECTED", "Version not found in servers.json for state: " + deviceState);
                         logger.info("Device {} rejected due to version mismatch", loginInfo.uin);
                         serialReader.resetState();
-                        serialReader.sendCommand("*SET#CRST#1#");
+                        // serialReader.sendCommand("*SET#CRST#1#");
                         continue;
                     }
                     logger.info("Version validation PASSED - Device version '{}' is valid for state '{}'", currentVer,
@@ -292,7 +292,7 @@ public class Orchestrator {
         FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, loginInfo.version, loginInfo.version,
                 "REJECTED", reason);
         serialReader.resetState();
-        serialReader.sendCommand("*SET#CRST#1#");
+        // serialReader.sendCommand("*SET#CRST#1#");
     }
 
     /**
@@ -303,7 +303,7 @@ public class Orchestrator {
         FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, loginInfo.version, loginInfo.version,
                 "ERROR", "Version validation error: " + e.getMessage());
         serialReader.resetState();
-        serialReader.sendCommand("*SET#CRST#1#");
+        // serialReader.sendCommand("*SET#CRST#1#");
     }
 
     /**

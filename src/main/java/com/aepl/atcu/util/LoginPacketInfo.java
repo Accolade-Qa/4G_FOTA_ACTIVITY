@@ -22,17 +22,17 @@ public class LoginPacketInfo {
             @JsonProperty("version") String version,
             @JsonProperty("vin") String vin,
             @JsonProperty("model") String model,
-            String state) {
-		this.imei = imei;
-		this.iccid = iccid;
-		this.uin = uin;
-		this.version = version;
-		this.vin = vin;
-		this.model = (model == null || model.isEmpty()) ? "4G" : model;
-		this.state = state;
-	}
+            @JsonProperty("state") String state) {
+        this.imei = imei;
+        this.iccid = iccid;
+        this.uin = uin;
+        this.version = version;
+        this.vin = vin;
+        this.model = (model == null || model.isEmpty()) ? "4G" : model;
+        this.state = state;
+    }
 
-	public String[] toCsvRow() {
-		return new String[] { uin, version, model, imei, state };
-	}
+    public String[] toCsvRow() {
+        return new String[] { uin, version, model, state, imei };
+    }
 }

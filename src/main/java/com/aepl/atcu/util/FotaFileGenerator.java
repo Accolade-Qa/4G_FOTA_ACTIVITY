@@ -28,6 +28,7 @@ public class FotaFileGenerator {
 		CSVParser parser = CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true).build().parse(in);
 
 		List<String> headers = parser.getHeaderNames();
+		System.out.println("*************Headers: " + headers);
 		List<List<String>> newRecords = new ArrayList<>();
 
 		for (CSVRecord record : parser) {
@@ -114,7 +115,7 @@ public class FotaFileGenerator {
 
 
 	public static String writeLoginPacketInfoCsv(List<LoginPacketInfo> infos, String outputCsvPath) throws IOException {
-		String[] headers = { "UIN", "UFW", "MODEL", "IMEI" };
+		String[] headers = { "UIN", "UFW", "MODEL","STATE", "IMEI" };
 		FileWriter out = new FileWriter(outputCsvPath);
 		CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.builder().setHeader(headers).build());
 		for (LoginPacketInfo info : infos) {

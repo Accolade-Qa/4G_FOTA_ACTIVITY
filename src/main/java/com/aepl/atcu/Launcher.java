@@ -9,7 +9,7 @@ import org.apache.logging.log4j.Logger;
 public class Launcher {
 	private static final Logger logger = LogManager.getLogger(Launcher.class);
 	private static String currentState = null;
-	private static final String DEFAULT_STATE = "Delhi";
+	private static final String DEFAULT_STATE = "West Bengal";
 	private static final String SERIAL_PORT = "";
 	private static final int BAUD_RATE = 115200;
 	private static final String FIRMWARE_JSON = "input/servers.json";
@@ -30,11 +30,7 @@ public class Launcher {
 	public static void setCurrentState(String state) {
 		currentState = state;
 	}
-
-
-
-
-
+	
 	public static void main(String[] args) {
 		setupDirectories();
 
