@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QProcess, Qt, QTimer
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QFormLayout,
@@ -24,6 +25,8 @@ APP_TITLE = "FOTA Automation UI"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPO_ROOT / "config.properties"
 TARGET_DIR = REPO_ROOT / "target"
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+LOGO_PATH = ASSETS_DIR / "logo.png"
 
 
 def read_properties(path: Path) -> dict:
@@ -80,6 +83,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
+        if LOGO_PATH.exists():
+            self.setWindowIcon(QIcon(str(LOGO_PATH)))
         self.resize(980, 720)
 
         self.backend_process: QProcess | None = None
