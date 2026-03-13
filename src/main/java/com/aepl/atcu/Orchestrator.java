@@ -73,14 +73,14 @@ public class Orchestrator {
 
                 // STEP 1-3: Read serial logs, fire OTA command, observe login packet
                 logger.info("STEP 1-3: Waiting for login packet from device (timeout: 180s)...");
-                serialReader.sendCommand("*SET#CRST#1#");
+                // serialReader.sendCommand("*SET#CRST#1#");
                 LoginPacketInfo loginInfo = waitForLoginPacket(180);
 
                 if (loginInfo == null) {
                     logger.error(
                             "Failed to get login packet within timeout. restarting cycle and waiting for new packet...");
                     serialReader.resetState();
-                    serialReader.sendCommand("*SET#CRST#1#");
+                    // serialReader.sendCommand("*SET#CRST#1#");
                     continue;
                 }
 
@@ -124,7 +124,7 @@ public class Orchestrator {
                                 "REJECTED", "Version not found in servers.json for state: " + deviceState);
                         logger.info("Device {} rejected due to version mismatch", loginInfo.uin);
                         serialReader.resetState();
-                        serialReader.sendCommand("*SET#CRST#1#");
+                        // serialReader.sendCommand("*SET#CRST#1#");
                         continue;
                     }
                     logger.info("Version validation PASSED - Device version '{}' is valid for state '{}'", currentVer,
@@ -189,6 +189,7 @@ public class Orchestrator {
 
                 // STEP 9-10: Monitor for downloading completion
                 logger.info("STEP 9-10: Monitoring device for download completion...");
+                serialReader.pauseLoginCapture();
                 boolean downloadComplete = monitorDownloadProgress(batchName, nextVersion);
 
                 if (!downloadComplete) {
@@ -243,6 +244,7 @@ public class Orchestrator {
 
             if (stagnantCount >= MAX_STAGNANT) {
                 logger.error("Download progress stuck at {}% for {} seconds", progress, stagnantCount);
+                serialReader.resumeLoginCapture();
                 return false;
             }
 
@@ -255,6 +257,7 @@ public class Orchestrator {
 
             if (progress >= 100.0) {
                 logger.info("Download reached 100%. Waiting for reboot and final login sequence...");
+                serialReader.resumeLoginCapture();
                 serialReader.resetState();
                 long overallStart = System.currentTimeMillis();
                 final long overallTimeoutMs = 120 * 1000L;
@@ -281,6 +284,7 @@ public class Orchestrator {
             Thread.sleep(1000);
         }
 
+        serialReader.resumeLoginCapture();
         return false;
     }
 

@@ -17,7 +17,7 @@ public class SerialReader {
 	private final SerialConnection connection;
 	private final LogWriter logWriter;
 	private final MessageParser parser;
-	private final BlockingQueue<String> processorQueue = new LinkedBlockingQueue<>(20000);
+	private final BlockingQueue<String> processorQueue = new LinkedBlockingQueue<>();
 	private final StringBuilder lineBuffer = new StringBuilder();
 	private volatile boolean running = false;
 	private Thread inputThread;
@@ -28,6 +28,7 @@ public class SerialReader {
 	private String lastDeviceState = null;
 	private LoginPacketInfo lastLoginPacketInfo = null;
 	private boolean loginPacketCaptured = false;
+	private boolean loginCaptureEnabled = true;
 	private boolean aeplFwVerFound = false;
 
 	public SerialReader(String portName, int baud) {
@@ -81,10 +82,7 @@ public class SerialReader {
 				if (!cleaned.isEmpty()) {
 					logWriter.log(cleaned);
 
-					boolean pOk = processorQueue.offer(cleaned);
-					if (!pOk) {
-						logger.warn("Processor Queue full: dropping line");
-					}
+					processorQueue.offer(cleaned);
 
 					processProgress(cleaned);
 					try {
@@ -123,7 +121,7 @@ public class SerialReader {
 				this.lastDeviceId = info.software;
 			}
 			
-			if (info.loginPacketInfo != null) {
+			if (info.loginPacketInfo != null && loginCaptureEnabled) {
 				// only capture the first login packet until state is reset
 				captureLoginPacket(info.loginPacketInfo);
 			}
@@ -165,6 +163,7 @@ public class SerialReader {
 		this.lastDeviceState = null;
 		this.lastLoginPacketInfo = null;
 		this.loginPacketCaptured = false;
+		this.loginCaptureEnabled = true;
 		this.aeplFwVerFound = false;
 		logger.info("[SR] State reset for new cycle.");
 	}
@@ -185,6 +184,14 @@ public class SerialReader {
 				logWriter.setImei(info.imei);
 			}
 		}
+	}
+
+	public void pauseLoginCapture() {
+		this.loginCaptureEnabled = false;
+	}
+
+	public void resumeLoginCapture() {
+		this.loginCaptureEnabled = true;
 	}
 
 	private void terminalInputLoop() {

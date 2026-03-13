@@ -18,7 +18,8 @@ public class MessageParser {
 	private static final Pattern STATE_PATTERN = Pattern.compile("(?i)STATE[:=\\s]+([^\\s,;:\\n]+)");
 	private static final Pattern VERSION_SIMPLE = Pattern.compile("\\d+\\.\\d+(?:\\.\\d+)*");
 	private static final Pattern FW_VER_PATTERN = Pattern.compile("(?i)aeplFwVer[:=\\s]+([^\\s,;]+)");
-	private static final Pattern DOWNLOAD_PATTERN = Pattern.compile("(?i)\\[FOT\\] downloading\\s+([\\d.]+)%");
+	private static final Pattern DOWNLOAD_PATTERN = Pattern.compile("(?i)\\[FOT\\].*?downloading\\s+([\\d.]+)%");
+	private static final Pattern VERSION_PREFIX = Pattern.compile("^(\\d+\\.\\d+(?:\\.\\d+)*)");
 
 	public String stripAnsi(String input) {
 		if (input == null)
@@ -125,11 +126,24 @@ public class MessageParser {
 		}
 
 		String[] parts = payload.split(",");
+		if (parts.length > 2) {
+			String typeFlag = parts[2].trim();
+			if (!"2".equals(typeFlag)) {
+				logger.debug("[PARSER] Non-login packet detected (type flag {}), skipping.", typeFlag);
+				return null;
+			}
+			// if 1 in login packet, then it is a health packet
+			if ("1".equals(typeFlag)) {
+				logger.debug("[PARSER] Health packet detected (type flag 1), skipping.");
+				return null;
+			}
+		}
 		if (parts.length > 7) {
 			String imei = parts.length > 4 ? parts[4].trim() : "";
 			String iccid = parts.length > 5 ? parts[5].trim() : "";
 			String UIN = parts.length > 6 ? parts[6].trim() : "";
-			String foundVersion = parts.length > 7 ? parts[7].trim() : "";
+			String foundVersionRaw = parts.length > 7 ? parts[7].trim() : "";
+			String foundVersion = normalizeVersion(foundVersionRaw);
 			String vin = parts.length > 8 ? parts[8].trim() : "";
 
 			if (!ValidationUtils.isValidUin(UIN)) {
@@ -144,7 +158,7 @@ public class MessageParser {
 				return null;
 			}
 
-			if (!foundVersion.isEmpty()) {
+			if (foundVersion != null && !foundVersion.isEmpty()) {
 				String stateForPacket = (Launcher.getCurrentState() != null && !Launcher.getCurrentState().isEmpty())
 						? Launcher.getCurrentState()
 						: null;
@@ -163,6 +177,18 @@ public class MessageParser {
 			}
 		}
 		return null;
+	}
+
+	private static String normalizeVersion(String raw) {
+		if (raw == null) {
+			return null;
+		}
+		String trimmed = raw.trim();
+		Matcher m = VERSION_PREFIX.matcher(trimmed);
+		if (m.find()) {
+			return m.group(1);
+		}
+		return trimmed;
 	}
 
 	private static String extractToken(Pattern pattern, String input) {

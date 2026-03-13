@@ -13,24 +13,11 @@ import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
-/**
- * Selenium-based web client for automating FOTA batch creation and monitoring.
- * It handles portal authentication, file uploads, and real-time status tracking
- * via the browser.
- * 
- * NOTE: The client uses explicit waits to handle asynchronous UI updates and
- * takes automatic screenshots during critical steps or failures.
- */
 public class FotaWebClient implements AutoCloseable {
 	private final WebDriver driver;
 	private final WebDriverWait wait;
 	private static final Logger logger = LogManager.getLogger(FotaWebClient.class);
 
-	/**
-	 * Initializes the Selenium WebDriver with custom options.
-	 * 
-	 * @param chromeDriverPath Path to the chromedriver executable
-	 */
 	public FotaWebClient(String chromeDriverPath) {
 		if (chromeDriverPath != null && !chromeDriverPath.trim().isEmpty()) {
 			System.setProperty("webdriver.chrome.driver", chromeDriverPath);
@@ -50,16 +37,6 @@ public class FotaWebClient implements AutoCloseable {
 		this.wait = new WebDriverWait(driver, Duration.ofSeconds(30));
 	}
 
-	/**
-	 * Navigates to the portal and performs user login.
-	 * 
-	 * NOTE: It sets the page zoom to 67% after navigation to ensure all UI elements
-	 * are visible and clickable on smaller screens or different resolutions.
-	 * 
-	 * @param url  The portal login URL
-	 * @param user Username
-	 * @param pass Password
-	 */
 	public void login(String url, String user, String pass) {
 		logger.info("Navigating to login page: {}", url);
 		driver.get(url);
@@ -91,15 +68,6 @@ public class FotaWebClient implements AutoCloseable {
 		takeScreenshot("login_success");
 	}
 
-	/**
-	 * Automates the creation of a new FOTA batch by filling the form and uploading
-	 * a CSV.
-	 * 
-	 * @param batchName   Unique name for the batch
-	 * @param description Detailed description of the batch
-	 * @param filePath    Path to the CSV file containing device UINs
-	 * @return True if the batch was created and successfully started
-	 */
 	public boolean createBatch(String batchName, String description, String filePath) {
 		logger.info("Creating batch: {}", batchName);
 
@@ -138,22 +106,19 @@ public class FotaWebClient implements AutoCloseable {
 		takeScreenshot("batch_submitted");
 
 		((JavascriptExecutor) driver).executeScript("window.scrollTo(0, document.body.scrollHeight);");
-		wait.until(ExpectedConditions.elementToBeClickable(By.xpath("//button[contains(text(), 'Start') or contains(text(), 'Run') or .//mat-icon[contains(text(), 'play')]]"))).click();
+		wait.until(ExpectedConditions.elementToBeClickable(By.xpath(
+				"//button[contains(text(), 'Start') or contains(text(), 'Run') or .//mat-icon[contains(text(), 'play')]]")))
+				.click();
 
-		// wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//*[contains(text(), 'FOTA Batch List')]")));
+		// wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath("//*[contains(text(),
+		// 'FOTA Batch List')]")));
 
 		return startFotaBatch(batchName);
 	}
 
-	/**
-	 * Locates a specific batch by name in the list and initiates the FOTA process.
-	 * 
-	 * @param targetBatchName The name of the batch to start
-	 * @return True if the batch completes reaching 100% progress
-	 */
 	public boolean startFotaBatch(String targetBatchName) {
 		driver.navigate().back();
-		
+
 		logger.info("Starting FOTA batch for: {}", targetBatchName);
 
 		String rowXPath = String.format("//table/tbody/tr[td[contains(text(), '%s')]]", targetBatchName);
@@ -197,17 +162,6 @@ public class FotaWebClient implements AutoCloseable {
 		}
 	}
 
-	/**
-	 * Periodically refreshes the page and checks the status of a specific FOTA
-	 * batch.
-	 * 
-	 * NOTE: This method will time out after approximately 30 minutes if completion
-	 * is not reached.
-	 * 
-	 * @param batchName The batch to monitor
-	 * @return True if status becomes 'Completed' and progress is 100%
-	 * @throws InterruptedException If the sleep interval is interrupted
-	 */
 	public boolean monitorBatch(String batchName) throws InterruptedException {
 		driver.navigate().refresh();
 		logger.info("Monitoring batch: {}", batchName);
@@ -236,12 +190,6 @@ public class FotaWebClient implements AutoCloseable {
 		return false;
 	}
 
-	/**
-	 * Captures a screenshot and saves it to the 'screenshots/' directory with a
-	 * timestamp.
-	 * 
-	 * @param name Descriptive name for the screenshot file
-	 */
 	private void takeScreenshot(String name) {
 		try {
 			File src = ((org.openqa.selenium.TakesScreenshot) driver)
@@ -256,9 +204,6 @@ public class FotaWebClient implements AutoCloseable {
 		}
 	}
 
-	/**
-	 * Closes the browser and terminates the WebDriver session.
-	 */
 	@Override
 	public void close() {
 		if (driver != null) {
