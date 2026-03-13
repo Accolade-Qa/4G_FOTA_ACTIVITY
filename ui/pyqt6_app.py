@@ -112,6 +112,9 @@ class MainWindow(QMainWindow):
         self.firmware_json = QLineEdit()
         form.addRow("Servers JSON", self._with_browse(self.firmware_json, "Select servers.json"))
 
+        self.firmware_csv = QLineEdit()
+        form.addRow("Firmware CSV", self._with_browse(self.firmware_csv, "Select firmware CSV"))
+
         self.audit_csv = QLineEdit()
         form.addRow("Audit CSV", self._with_browse(self.audit_csv, "Select audit CSV"))
 
@@ -176,6 +179,7 @@ class MainWindow(QMainWindow):
         self.serial_port.setText(props.get("serial.port", ""))
         self.baud_rate.setValue(int(props.get("serial.baud", "115200")))
         self.firmware_json.setText(props.get("firmware.json", "input/servers.json"))
+        self.firmware_csv.setText(props.get("firmware.csv", "input/fota_batch.csv"))
         self.audit_csv.setText(props.get("audit.csv", "results/fota_audit.csv"))
         self.login_json.setText(props.get("login.json", "results/login_packets.json"))
         self.portal_url.setText(props.get("login.url", ""))
@@ -187,7 +191,7 @@ class MainWindow(QMainWindow):
         return {
             "serial.port": self.serial_port.text().strip(),
             "serial.baud": str(self.baud_rate.value()),
-            "firmware.csv": "input/fota_batch.csv",
+            "firmware.csv": self.firmware_csv.text().strip(),
             "audit.csv": self.audit_csv.text().strip(),
             "firmware.json": self.firmware_json.text().strip(),
             "login.json": self.login_json.text().strip(),
@@ -204,6 +208,9 @@ class MainWindow(QMainWindow):
     def _start_backend(self) -> None:
         if self.backend_process and self.backend_process.state() != QProcess.ProcessState.NotRunning:
             QMessageBox.information(self, APP_TITLE, "Backend is already running.")
+            return
+        if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
+            QMessageBox.information(self, APP_TITLE, "Build is already running.")
             return
 
         self._save_config()
@@ -228,12 +235,26 @@ class MainWindow(QMainWindow):
             lambda: self._append_process_output(self.build_process)
         )
         self.build_process.finished.connect(self._on_build_finished)
+        self.build_process.errorOccurred.connect(
+            lambda err: self._on_process_error("Build", err)
+        )
+        self._append_log("Running Maven build: mvn -q -DskipTests package")
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
         self.build_process.start("mvn", ["-q", "-DskipTests", "package"])
 
-    def _on_build_finished(self) -> None:
+    def _on_build_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        self.build_process = None
+        if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
+            self._append_log(f"Build failed (exit code {exit_code}).")
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            return
         jar = find_jar()
         if not jar:
             self._append_log("Build finished but no JAR was found in target/.")
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
             return
         self._run_java(jar)
 
@@ -247,6 +268,9 @@ class MainWindow(QMainWindow):
             lambda: self._append_process_output(self.backend_process)
         )
         self.backend_process.finished.connect(self._on_backend_finished)
+        self.backend_process.errorOccurred.connect(
+            lambda err: self._on_process_error("Backend", err)
+        )
         self._append_log(f"Starting backend: {jar.name}")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -256,18 +280,24 @@ class MainWindow(QMainWindow):
         )
 
     def _stop_backend(self) -> None:
-        if not self.backend_process:
-            return
-        self.backend_process.terminate()
-        self.backend_process.waitForFinished(5000)
-        if self.backend_process.state() != QProcess.ProcessState.NotRunning:
-            self.backend_process.kill()
-        self._append_log("Backend stopped.")
-
-    def _on_backend_finished(self) -> None:
+        if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
+            self._stop_process(self.build_process, "Build")
+            self.build_process = None
+        if self.backend_process and self.backend_process.state() != QProcess.ProcessState.NotRunning:
+            self._stop_process(self.backend_process, "Backend")
+            self.backend_process = None
+            self._append_log("Backend stopped.")
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self._append_log("Backend exited.")
+
+    def _on_backend_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        self.backend_process = None
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        if exit_status == QProcess.ExitStatus.NormalExit:
+            self._append_log(f"Backend exited (code {exit_code}).")
+        else:
+            self._append_log("Backend crashed.")
 
     def _append_process_output(self, proc: QProcess) -> None:
         data = proc.readAllStandardOutput().data().decode(errors="ignore")
@@ -277,10 +307,27 @@ class MainWindow(QMainWindow):
         if err:
             self._append_log(err.rstrip())
 
+    def _on_process_error(self, label: str, err: QProcess.ProcessError) -> None:
+        self._append_log(f"{label} process error: {err.name}")
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+
     def _append_log(self, text: str) -> None:
         if not text:
             return
         self.log.appendPlainText(text)
+
+    def _stop_process(self, proc: QProcess, label: str) -> None:
+        proc.terminate()
+        proc.waitForFinished(5000)
+        if proc.state() != QProcess.ProcessState.NotRunning:
+            self._append_log(f"{label} did not stop on terminate; killing...")
+            proc.kill()
+            proc.waitForFinished(3000)
+
+    def closeEvent(self, event) -> None:
+        self._stop_backend()
+        event.accept()
 
 
 def main() -> int:
