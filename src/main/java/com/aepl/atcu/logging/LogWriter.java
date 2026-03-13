@@ -51,10 +51,11 @@ public class LogWriter implements AutoCloseable {
     }
 
     public void log(String line) {
-        if (line != null && !line.isEmpty()) {
-            boolean ok = queue.offer(line);
+        String sanitized = sanitize(line);
+        if (sanitized != null && !sanitized.isEmpty()) {
+            boolean ok = queue.offer(sanitized);
             if (!ok) {
-                logger.warn("Log queue full, dropping: {}", line);
+                logger.warn("Log queue full, dropping: {}", sanitized);
             }
         }
     }
@@ -128,5 +129,34 @@ public class LogWriter implements AutoCloseable {
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private static String sanitize(String input) {
+        if (input == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder(input.length());
+        boolean lastWasSpace = false;
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c >= 32 && c <= 126) {
+                sb.append(c);
+                lastWasSpace = false;
+                continue;
+            }
+            if (Character.isWhitespace(c)) {
+                if (!lastWasSpace) {
+                    sb.append(' ');
+                    lastWasSpace = true;
+                }
+                continue;
+            }
+            // drop other control / non-ascii chars
+            if (!lastWasSpace) {
+                sb.append(' ');
+                lastWasSpace = true;
+            }
+        }
+        return sb.toString().trim();
     }
 }

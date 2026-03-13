@@ -189,6 +189,7 @@ public class Orchestrator {
 
                 // STEP 9-10: Monitor for downloading completion
                 logger.info("STEP 9-10: Monitoring device for download completion...");
+                serialReader.pauseLoginCapture();
                 boolean downloadComplete = monitorDownloadProgress(batchName, nextVersion);
 
                 if (!downloadComplete) {
@@ -243,6 +244,7 @@ public class Orchestrator {
 
             if (stagnantCount >= MAX_STAGNANT) {
                 logger.error("Download progress stuck at {}% for {} seconds", progress, stagnantCount);
+                serialReader.resumeLoginCapture();
                 return false;
             }
 
@@ -255,6 +257,7 @@ public class Orchestrator {
 
             if (progress >= 100.0) {
                 logger.info("Download reached 100%. Waiting for reboot and final login sequence...");
+                serialReader.resumeLoginCapture();
                 serialReader.resetState();
                 long overallStart = System.currentTimeMillis();
                 final long overallTimeoutMs = 120 * 1000L;
@@ -281,6 +284,7 @@ public class Orchestrator {
             Thread.sleep(1000);
         }
 
+        serialReader.resumeLoginCapture();
         return false;
     }
 

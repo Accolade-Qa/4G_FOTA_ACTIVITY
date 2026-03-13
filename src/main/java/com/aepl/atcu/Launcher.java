@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import com.aepl.atcu.util.ServerExcelImporter;
 
 public class Launcher {
 	private static final Logger logger = LogManager.getLogger(Launcher.class);
@@ -30,7 +31,6 @@ public class Launcher {
 	public static void setCurrentState(String state) {
 		currentState = state;
 	}
-	
 	public static void main(String[] args) {
 		setupDirectories();
 
@@ -43,6 +43,9 @@ public class Launcher {
 			logger.info("Audit CSV: {}", AUDIT_CSV);
 			logger.info("Portal URL: {}", PORTAL_URL);
 			logger.info("Default State: {}", DEFAULT_STATE);
+
+			ServerExcelImporter.updateServersJsonFromExcel(Paths.get("input"), Paths.get(FIRMWARE_JSON),
+					DEFAULT_STATE);
 
 			Orchestrator orch = new Orchestrator(SERIAL_PORT, BAUD_RATE, AUDIT_CSV, FIRMWARE_JSON, LOGIN_JSON);
 			orch.start(PORTAL_URL, PORTAL_USER, PORTAL_PASS);

@@ -20,7 +20,6 @@ public class FotaFileGenerator {
 
 	private static final Logger logger = LogManager.getLogger(FotaFileGenerator.class);
 
-
 	public static String generateBatchFile(String sourceCsvPath, String outputCsvPath) throws IOException {
 		logger.info("[GEN] Reading source CSV: {}", sourceCsvPath);
 
@@ -33,13 +32,13 @@ public class FotaFileGenerator {
 
 		for (CSVRecord record : parser) {
 			String uin = record.isMapped("UIN") ? record.get("UIN") : "Unknown";
-			
+
 			// Validate UIN starts with ACON
 			if (!ValidationUtils.isValidUin(uin)) {
 				logger.warn("[GEN] Skipping record with invalid UIN (must start with {}): {}", "ACON", uin);
 				continue;
 			}
-			
+
 			String oldUfw = record.get("UFW");
 			String newUfw = incrementUfw(oldUfw);
 
@@ -70,7 +69,6 @@ public class FotaFileGenerator {
 		return Paths.get(outputCsvPath).toAbsolutePath().toString();
 	}
 
-
 	public static String generateBatchFileWithExplicitVersion(String sourceCsvPath, String outputCsvPath,
 			String targetVersion) throws IOException {
 		logger.info("[GEN] Reading source CSV: {} using target version: {}", sourceCsvPath, targetVersion);
@@ -83,13 +81,13 @@ public class FotaFileGenerator {
 
 		for (CSVRecord record : parser) {
 			String uin = record.isMapped("UIN") ? record.get("UIN") : "Unknown";
-			
+
 			// Validate UIN starts with ACON
 			if (!ValidationUtils.isValidUin(uin)) {
 				logger.warn("[GEN] Skipping record with invalid UIN (must start with {}): {}", "ACON", uin);
 				continue;
 			}
-			
+
 			List<String> row = new ArrayList<>();
 			for (String header : headers) {
 				if (header.equalsIgnoreCase("UFW")) {
@@ -113,9 +111,8 @@ public class FotaFileGenerator {
 		return Paths.get(outputCsvPath).toAbsolutePath().toString();
 	}
 
-
 	public static String writeLoginPacketInfoCsv(List<LoginPacketInfo> infos, String outputCsvPath) throws IOException {
-		String[] headers = { "UIN", "UFW", "MODEL","STATE", "IMEI" };
+		String[] headers = { "UIN", "UFW", "MODEL", "IMEI", "STATE" };
 		FileWriter out = new FileWriter(outputCsvPath);
 		CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.builder().setHeader(headers).build());
 		for (LoginPacketInfo info : infos) {
@@ -124,7 +121,6 @@ public class FotaFileGenerator {
 		printer.close();
 		return Paths.get(outputCsvPath).toAbsolutePath().toString();
 	}
-
 
 	public static String incrementUfw(String ufw) {
 		if (ufw == null || ufw.isEmpty())
