@@ -176,16 +176,20 @@ class MainWindow(QMainWindow):
 
     def _load_config(self) -> None:
         props = read_properties(CONFIG_PATH)
+        def _get(key: str, default: str) -> str:
+            value = props.get(key, "").strip()
+            return value if value else default
+
         self.serial_port.setText(props.get("serial.port", ""))
-        self.baud_rate.setValue(int(props.get("serial.baud", "115200")))
-        self.firmware_json.setText(props.get("firmware.json", "input/servers.json"))
-        self.firmware_csv.setText(props.get("firmware.csv", "input/fota_batch.csv"))
-        self.audit_csv.setText(props.get("audit.csv", "results/fota_audit.csv"))
-        self.login_json.setText(props.get("login.json", "results/login_packets.json"))
+        self.baud_rate.setValue(int(_get("serial.baud", "115200")))
+        self.firmware_json.setText(_get("firmware.json", "input/servers.json"))
+        self.firmware_csv.setText(_get("firmware.csv", "input/fota_batch.csv"))
+        self.audit_csv.setText(_get("audit.csv", "results/fota_audit.csv"))
+        self.login_json.setText(_get("login.json", "results/login_packets.json"))
         self.portal_url.setText(props.get("login.url", ""))
         self.portal_user.setText(props.get("login.user", ""))
         self.portal_pass.setText(props.get("login.pass", ""))
-        self.default_state.setText(props.get("state", "Default"))
+        self.default_state.setText(_get("state", "Default"))
 
     def _collect_config(self) -> dict:
         return {
@@ -299,7 +303,9 @@ class MainWindow(QMainWindow):
         else:
             self._append_log("Backend crashed.")
 
-    def _append_process_output(self, proc: QProcess) -> None:
+    def _append_process_output(self, proc: QProcess | None) -> None:
+        if proc is None:
+            return
         data = proc.readAllStandardOutput().data().decode(errors="ignore")
         err = proc.readAllStandardError().data().decode(errors="ignore")
         if data:

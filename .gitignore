@@ -62,3 +62,6 @@ REFACTORED_FLOW.md
 Thumbs.db
 # macOS Desktop Services Store
 .DS_Store
+
+build
+dist
