@@ -17,7 +17,7 @@ public class SerialReader {
 	private final SerialConnection connection;
 	private final LogWriter logWriter;
 	private final MessageParser parser;
-	private final BlockingQueue<String> processorQueue = new LinkedBlockingQueue<>(20000);
+	private final BlockingQueue<String> processorQueue = new LinkedBlockingQueue<>();
 	private final StringBuilder lineBuffer = new StringBuilder();
 	private volatile boolean running = false;
 	private Thread inputThread;
@@ -81,9 +81,11 @@ public class SerialReader {
 				if (!cleaned.isEmpty()) {
 					logWriter.log(cleaned);
 
-					boolean pOk = processorQueue.offer(cleaned);
-					if (!pOk) {
-						logger.warn("Processor Queue full: dropping line");
+					try {
+						processorQueue.put(cleaned);
+					} catch (InterruptedException ie) {
+						Thread.currentThread().interrupt();
+						logger.warn("Processor queue interrupted while enqueueing.");
 					}
 
 					processProgress(cleaned);
