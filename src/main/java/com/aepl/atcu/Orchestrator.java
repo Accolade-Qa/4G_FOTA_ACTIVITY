@@ -1,16 +1,16 @@
 package com.aepl.atcu;
 
-import com.aepl.atcu.logic.FirmwareResolver;
-import com.aepl.atcu.web.FotaWebClient;
-import com.aepl.atcu.util.FotaFileGenerator;
-import com.aepl.atcu.util.LoginPacketInfo;
-import com.aepl.atcu.util.LoginPacketStore;
-
 import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import com.aepl.atcu.logic.FirmwareResolver;
+import com.aepl.atcu.util.FotaFileGenerator;
+import com.aepl.atcu.util.LoginPacketInfo;
+import com.aepl.atcu.util.LoginPacketStore;
+import com.aepl.atcu.web.FotaWebClient;
 
 /**
  * Simplified FOTA Orchestrator following a direct workflow:

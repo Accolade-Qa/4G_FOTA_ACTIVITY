@@ -82,7 +82,13 @@ public class SerialReader {
 				if (!cleaned.isEmpty()) {
 					logWriter.log(cleaned);
 
-					processorQueue.offer(cleaned);
+
+					try {
+						processorQueue.put(cleaned);
+					} catch (InterruptedException ie) {
+						Thread.currentThread().interrupt();
+						logger.warn("Processor queue interrupted while enqueueing.");
+					}
 
 					processProgress(cleaned);
 					try {

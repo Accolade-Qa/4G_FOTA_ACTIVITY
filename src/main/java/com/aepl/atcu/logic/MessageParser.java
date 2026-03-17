@@ -2,11 +2,13 @@ package com.aepl.atcu.logic;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.aepl.atcu.Launcher;
 import com.aepl.atcu.util.LoginPacketInfo;
 import com.aepl.atcu.util.ValidationUtils;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 public class MessageParser {
 
@@ -113,6 +115,7 @@ public class MessageParser {
 		}
 		return null;
 	}
+
 	private ParsedInfo parseLoginPacket(String line) {
 		String payload = line;
 		if (payload.contains("|")) {
@@ -147,14 +150,12 @@ public class MessageParser {
 			String vin = parts.length > 8 ? parts[8].trim() : "";
 
 			if (!ValidationUtils.isValidUin(UIN)) {
-				logger.warn("[PARSER] Invalid UIN (must start with {}): {}. Skipping login packet.",
-						"ACON", UIN);
+				logger.warn("[PARSER] Invalid UIN (must start with {}): {}. Skipping login packet.", "ACON", UIN);
 				return null;
 			}
 
 			if (!ValidationUtils.isValidImei(imei)) {
-				logger.warn("[PARSER] Invalid IMEI (must be 13-15 digits): {}. Skipping login packet.",
-						imei);
+				logger.warn("[PARSER] Invalid IMEI (must be 13-15 digits): {}. Skipping login packet.", imei);
 				return null;
 			}
 
