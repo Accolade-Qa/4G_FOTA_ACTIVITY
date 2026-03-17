@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -22,11 +23,9 @@ from PyQt6.QtWidgets import (
 
 
 APP_TITLE = "FOTA Automation UI"
-REPO_ROOT = Path(__file__).resolve().parents[1]
-CONFIG_PATH = REPO_ROOT / "config.properties"
-TARGET_DIR = REPO_ROOT / "target"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 LOGO_PATH = ASSETS_DIR / "logo.png"
+LAST_REPO_PATH_FILE = Path.home() / ".fota_ui_repo_root"
 
 
 def read_properties(path: Path) -> dict:
@@ -66,10 +65,10 @@ def write_properties(path: Path, data: dict) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def find_jar() -> Path | None:
-    if not TARGET_DIR.exists():
+def find_jar(target_dir: Path) -> Path | None:
+    if not target_dir.exists():
         return None
-    jars = list(TARGET_DIR.glob("*.jar"))
+    jars = list(target_dir.glob("*.jar"))
     if not jars:
         return None
     preferred = [j for j in jars if "shaded" in j.name and "original" not in j.name]
@@ -77,6 +76,273 @@ def find_jar() -> Path | None:
         return preferred[0]
     filtered = [j for j in jars if "original" not in j.name]
     return filtered[0] if filtered else None
+
+
+def _normalize_header(value: str) -> str:
+    return "".join(ch for ch in value.strip().lower() if ch.isalnum())
+
+
+def generate_servers_json_from_xlsx(xlsx_path: Path, json_path: Path) -> tuple[bool, str]:
+    try:
+        from openpyxl import load_workbook
+    except Exception as exc:
+        return False, f"Missing dependency 'openpyxl': {exc}"
+
+    if not xlsx_path.exists():
+        return False, f"Server input not found: {xlsx_path}"
+
+    wb = load_workbook(filename=xlsx_path, data_only=True, read_only=True)
+    if not wb.sheetnames:
+        return False, "No sheets found in Excel file."
+    ws = wb[wb.sheetnames[0]]
+
+    rows = ws.iter_rows(min_row=1, values_only=True)
+    try:
+        header_row = next(rows)
+    except StopIteration:
+        return False, "Excel file is empty."
+
+    headers = []
+    for cell in header_row:
+        if cell is None:
+            headers.append("")
+        else:
+            headers.append(_normalize_header(str(cell)))
+
+    def _find_header(candidates: list[str]) -> int | None:
+        for i, name in enumerate(headers):
+            if name in candidates:
+                return i
+        return None
+
+    state_idx = _find_header(["state", "statename"])
+    abbr_idx = _find_header(["stateabbreviation", "stateabbr", "abbr"])
+    version_idx = _find_header(["version", "firmwareversion", "ufw", "softwareversion", "swversion"])
+    filename_idx = _find_header(["filename", "binfilename", "firmwarefile", "fwfile"])
+
+    if state_idx is None or version_idx is None:
+        return False, "Excel file missing required columns: state and version."
+
+    by_state: dict[str, dict[str, object]] = {}
+    for row in rows:
+        if row is None:
+            continue
+        state_raw = row[state_idx] if state_idx < len(row) else None
+        version_raw = row[version_idx] if version_idx < len(row) else None
+        if state_raw is None or version_raw is None:
+            continue
+
+        state = str(state_raw).strip()
+        version = str(version_raw).strip()
+        if not state or not version:
+            continue
+
+        entry = by_state.setdefault(
+            state,
+            {"state": state, "stateAbbreviation": None, "versions": [], "firmware": []},
+        )
+
+        if abbr_idx is not None and entry.get("stateAbbreviation") in (None, ""):
+            abbr_raw = row[abbr_idx] if abbr_idx < len(row) else None
+            if abbr_raw is not None and str(abbr_raw).strip():
+                entry["stateAbbreviation"] = str(abbr_raw).strip()
+
+        versions = entry["versions"]
+        if version not in versions:
+            versions.append(version)
+
+        if filename_idx is not None:
+            filename_raw = row[filename_idx] if filename_idx < len(row) else None
+            if filename_raw is not None and str(filename_raw).strip():
+                entry["firmware"].append(
+                    {"firmwareVersion": version, "fileName": str(filename_raw).strip()}
+                )
+
+    data = list(by_state.values())
+    for item in data:
+        if not item.get("stateAbbreviation"):
+            item.pop("stateAbbreviation", None)
+        if not item.get("firmware"):
+            item.pop("firmware", None)
+
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return True, f"Generated {json_path} from {xlsx_path}"
+
+
+def generate_servers_json_from_firmware_csv(
+    csv_path: Path, json_path: Path, default_state: str | None = None
+) -> tuple[bool, str]:
+    import csv
+
+    if not csv_path.exists():
+        return False, f"Firmware CSV not found: {csv_path}"
+
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            return False, "Firmware CSV has no headers."
+
+        headers = {_normalize_header(h): h for h in reader.fieldnames if h is not None}
+        state_header = headers.get("state")
+        version_header = (
+            headers.get("ufw")
+            or headers.get("version")
+            or headers.get("firmwareversion")
+            or headers.get("swversion")
+        )
+
+        if not version_header:
+            return False, "Firmware CSV missing required column: UFW/version."
+
+        by_state: dict[str, dict[str, object]] = {}
+        for row in reader:
+            if not row:
+                continue
+            version_raw = row.get(version_header)
+            state_raw = row.get(state_header) if state_header else None
+
+            version = str(version_raw).strip() if version_raw is not None else ""
+            state = str(state_raw).strip() if state_raw is not None else ""
+
+            if not state:
+                state = default_state or ""
+            if not state or not version:
+                continue
+
+            entry = by_state.setdefault(state, {"state": state, "versions": []})
+            versions = entry["versions"]
+            if version not in versions:
+                versions.append(version)
+
+    if not by_state:
+        return False, "Firmware CSV produced no state/version entries."
+
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(list(by_state.values()), indent=2), encoding="utf-8")
+    return True, f"Generated {json_path} from {csv_path}"
+
+
+def generate_servers_json_from_inputs(
+    xlsx_path: Path,
+    csv_path: Path,
+    json_path: Path,
+    default_state: str | None = None,
+) -> tuple[bool, str]:
+    by_state: dict[str, dict[str, object]] = {}
+    warnings: list[str] = []
+
+    if xlsx_path.exists():
+        try:
+            from openpyxl import load_workbook
+        except Exception as exc:
+            warnings.append(f"Missing dependency 'openpyxl': {exc}")
+        else:
+            wb = load_workbook(filename=xlsx_path, data_only=True, read_only=True)
+            if wb.sheetnames:
+                ws = wb[wb.sheetnames[0]]
+                rows = ws.iter_rows(min_row=1, values_only=True)
+                try:
+                    header_row = next(rows)
+                except StopIteration:
+                    header_row = None
+
+                if header_row:
+                    headers = []
+                    for cell in header_row:
+                        headers.append("" if cell is None else _normalize_header(str(cell)))
+
+                    def _find_header(candidates: list[str]) -> int | None:
+                        for i, name in enumerate(headers):
+                            if name in candidates:
+                                return i
+                        return None
+
+                    state_idx = _find_header(["state", "statename"])
+                    abbr_idx = _find_header(["stateabbreviation", "stateabbr", "abbr"])
+
+                    if state_idx is None:
+                        warnings.append("Server input missing state column in Excel file.")
+                    else:
+                        for row in rows:
+                            if row is None:
+                                continue
+                            state_raw = row[state_idx] if state_idx < len(row) else None
+                            if state_raw is None:
+                                continue
+                            state = str(state_raw).strip()
+                            if not state:
+                                continue
+
+                            entry = by_state.setdefault(
+                                state,
+                                {"state": state, "stateAbbreviation": None, "versions": []},
+                            )
+                            if abbr_idx is not None and entry.get("stateAbbreviation") in (None, ""):
+                                abbr_raw = row[abbr_idx] if abbr_idx < len(row) else None
+                                if abbr_raw is not None and str(abbr_raw).strip():
+                                    entry["stateAbbreviation"] = str(abbr_raw).strip()
+            else:
+                warnings.append("No sheets found in Excel file.")
+    else:
+        warnings.append(f"Server input not found: {xlsx_path}")
+
+    if csv_path.exists():
+        import csv
+
+        with csv_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if not reader.fieldnames:
+                warnings.append("Firmware CSV has no headers.")
+            else:
+                headers = {_normalize_header(h): h for h in reader.fieldnames if h is not None}
+                state_header = headers.get("state")
+                version_header = (
+                    headers.get("ufw")
+                    or headers.get("version")
+                    or headers.get("firmwareversion")
+                    or headers.get("swversion")
+                )
+
+                if not version_header:
+                    warnings.append("Firmware CSV missing required column: UFW/version.")
+                else:
+                    for row in reader:
+                        if not row:
+                            continue
+                        version_raw = row.get(version_header)
+                        state_raw = row.get(state_header) if state_header else None
+
+                        version = str(version_raw).strip() if version_raw is not None else ""
+                        state = str(state_raw).strip() if state_raw is not None else ""
+                        if not state:
+                            state = default_state or ""
+                        if not state or not version:
+                            continue
+
+                        entry = by_state.setdefault(state, {"state": state, "versions": []})
+                        versions = entry.setdefault("versions", [])
+                        if version not in versions:
+                            versions.append(version)
+    else:
+        warnings.append(f"Firmware CSV not found: {csv_path}")
+
+    if not by_state:
+        details = "; ".join(warnings) if warnings else "No input data."
+        return False, f"No server data generated. {details}"
+
+    data = list(by_state.values())
+    for item in data:
+        if not item.get("stateAbbreviation"):
+            item.pop("stateAbbreviation", None)
+        if not item.get("versions"):
+            item["versions"] = []
+
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    detail = "; ".join(warnings) if warnings else "OK"
+    return True, f"Generated {json_path} from inputs. {detail}"
 
 
 class MainWindow(QMainWindow):
@@ -87,12 +353,60 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(LOGO_PATH)))
         self.resize(980, 720)
 
+        self.repo_root = self._resolve_repo_root()
+        self._apply_repo_root(self.repo_root)
+
         self.backend_process: QProcess | None = None
         self.build_process: QProcess | None = None
+        self.stop_requested = False
 
         self._init_ui()
         self._load_config()
         QTimer.singleShot(0, self._start_backend)
+
+    def _apply_repo_root(self, repo_root: Path) -> None:
+        self.repo_root = repo_root
+        self.config_path = repo_root / "config.properties"
+        self.target_dir = repo_root / "target"
+        self.input_dir = repo_root / "input"
+        self.server_inputs_xlsx = self.input_dir / "Server_Inputs.xlsx"
+
+    def _is_repo_root(self, path: Path) -> bool:
+        if not path.exists() or not path.is_dir():
+            return False
+        if (path / "pom.xml").exists():
+            return True
+        if (path / "config.properties").exists() and (path / "src").exists():
+            return True
+        return False
+
+    def _resolve_repo_root(self) -> Path:
+        candidates: list[Path] = []
+        if LAST_REPO_PATH_FILE.exists():
+            try:
+                saved = Path(LAST_REPO_PATH_FILE.read_text(encoding="utf-8").strip())
+                if saved:
+                    candidates.append(saved)
+            except Exception:
+                pass
+        candidates.append(Path(__file__).resolve().parents[1])
+        candidates.append(Path.cwd())
+
+        for candidate in candidates:
+            if self._is_repo_root(candidate):
+                return candidate
+
+        chosen = QFileDialog.getExistingDirectory(None, "Select FOTA repo folder", str(Path.cwd()))
+        if chosen:
+            chosen_path = Path(chosen)
+            if self._is_repo_root(chosen_path):
+                try:
+                    LAST_REPO_PATH_FILE.write_text(str(chosen_path), encoding="utf-8")
+                except Exception:
+                    pass
+                return chosen_path
+
+        return Path(__file__).resolve().parents[1]
 
     def _init_ui(self) -> None:
         root = QWidget()
@@ -169,13 +483,13 @@ class MainWindow(QMainWindow):
         return wrapper
 
     def _browse_file(self, line_edit: QLineEdit, title: str) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, title, str(REPO_ROOT))
+        path, _ = QFileDialog.getOpenFileName(self, title, str(self.repo_root))
         if path:
-            rel = os.path.relpath(path, REPO_ROOT)
+            rel = os.path.relpath(path, self.repo_root)
             line_edit.setText(rel)
 
     def _load_config(self) -> None:
-        props = read_properties(CONFIG_PATH)
+        props = read_properties(self.config_path)
         def _get(key: str, default: str) -> str:
             value = props.get(key, "").strip()
             return value if value else default
@@ -206,8 +520,8 @@ class MainWindow(QMainWindow):
         }
 
     def _save_config(self) -> None:
-        write_properties(CONFIG_PATH, self._collect_config())
-        self._append_log(f"Saved config to {CONFIG_PATH}")
+        write_properties(self.config_path, self._collect_config())
+        self._append_log(f"Saved config to {self.config_path}")
 
     def _start_backend(self) -> None:
         if self.backend_process and self.backend_process.state() != QProcess.ProcessState.NotRunning:
@@ -217,9 +531,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_TITLE, "Build is already running.")
             return
 
+        self.stop_requested = False
         self._save_config()
+        self._generate_servers_json()
 
-        jar = find_jar()
+        jar = find_jar(self.target_dir)
         if not jar:
             self._append_log("No JAR found in target/. Running Maven package...")
             self._run_maven_build()
@@ -231,7 +547,7 @@ class MainWindow(QMainWindow):
         if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
             return
         self.build_process = QProcess(self)
-        self.build_process.setWorkingDirectory(str(REPO_ROOT))
+        self.build_process.setWorkingDirectory(str(self.repo_root))
         self.build_process.readyReadStandardOutput.connect(
             lambda: self._append_process_output(self.build_process)
         )
@@ -249,12 +565,17 @@ class MainWindow(QMainWindow):
 
     def _on_build_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self.build_process = None
+        if self.stop_requested:
+            self._append_log("Build stopped.")
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            return
         if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
             self._append_log(f"Build failed (exit code {exit_code}).")
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
             return
-        jar = find_jar()
+        jar = find_jar(self.target_dir)
         if not jar:
             self._append_log("Build finished but no JAR was found in target/.")
             self.start_btn.setEnabled(True)
@@ -264,7 +585,7 @@ class MainWindow(QMainWindow):
 
     def _run_java(self, jar: Path) -> None:
         self.backend_process = QProcess(self)
-        self.backend_process.setWorkingDirectory(str(REPO_ROOT))
+        self.backend_process.setWorkingDirectory(str(self.repo_root))
         self.backend_process.readyReadStandardOutput.connect(
             lambda: self._append_process_output(self.backend_process)
         )
@@ -283,7 +604,27 @@ class MainWindow(QMainWindow):
             ["-Dfota.config=config.properties", "-jar", str(jar)],
         )
 
+    def _generate_servers_json(self) -> None:
+        json_path = self._resolve_path(self.firmware_json.text().strip())
+        ok, message = generate_servers_json_from_inputs(
+            self.server_inputs_xlsx,
+            self._resolve_path(self.firmware_csv.text().strip()),
+            json_path,
+            self.default_state.text().strip(),
+        )
+        if ok:
+            self._append_log(message)
+        else:
+            self._append_log(f"[WARN] {message}")
+
+    def _resolve_path(self, value: str) -> Path:
+        if not value:
+            return self.repo_root
+        path = Path(value)
+        return path if path.is_absolute() else (self.repo_root / path)
+
     def _stop_backend(self) -> None:
+        self.stop_requested = True
         if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
             self._stop_process(self.build_process, "Build")
             self.build_process = None
@@ -298,6 +639,8 @@ class MainWindow(QMainWindow):
         self.backend_process = None
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        if self.stop_requested:
+            return
         if exit_status == QProcess.ExitStatus.NormalExit:
             self._append_log(f"Backend exited (code {exit_code}).")
         else:
@@ -330,6 +673,17 @@ class MainWindow(QMainWindow):
             self._append_log(f"{label} did not stop on terminate; killing...")
             proc.kill()
             proc.waitForFinished(3000)
+        if proc.state() != QProcess.ProcessState.NotRunning:
+            pid = proc.processId()
+            if pid:
+                try:
+                    if sys.platform.startswith("win"):
+                        QProcess.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
+                    else:
+                        QProcess.execute("kill", ["-9", str(pid)])
+                    proc.waitForFinished(3000)
+                except Exception as exc:
+                    self._append_log(f"{label} force kill failed: {exc}")
 
     def closeEvent(self, event) -> None:
         self._stop_backend()
