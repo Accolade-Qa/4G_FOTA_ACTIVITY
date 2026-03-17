@@ -78,135 +78,6 @@ def find_jar(target_dir: Path) -> Path | None:
     return filtered[0] if filtered else None
 
 
-def _normalize_header(value: str) -> str:
-    return "".join(ch for ch in value.strip().lower() if ch.isalnum())
-
-
-def generate_servers_json_from_inputs(
-    xlsx_path: Path,
-    csv_path: Path,
-    json_path: Path,
-    default_state: str | None = None,
-) -> tuple[bool, str]:
-    by_state: dict[str, dict[str, object]] = {}
-    warnings: list[str] = []
-
-    if xlsx_path.exists():
-        try:
-            from openpyxl import load_workbook
-        except Exception as exc:
-            warnings.append(f"Missing dependency 'openpyxl': {exc}")
-        else:
-            wb = load_workbook(filename=xlsx_path, data_only=True, read_only=True)
-            if wb.sheetnames:
-                for sheet_name in wb.sheetnames:
-                    if sheet_name.strip().lower() == "summary":
-                        continue
-                    ws = wb[sheet_name]
-                    rows = ws.iter_rows(min_row=1, values_only=True)
-                    try:
-                        header_row = next(rows)
-                    except StopIteration:
-                        continue
-
-                    headers = []
-                    for cell in header_row:
-                        headers.append("" if cell is None else _normalize_header(str(cell)))
-
-                    fw_idx = None
-                    for i, name in enumerate(headers):
-                        if not name:
-                            continue
-                        if "firmwarename" in name or name in ("firmware", "version"):
-                            fw_idx = i
-                            break
-                    if fw_idx is None:
-                        fw_idx = 1  # default to second column
-
-                    versions: list[str] = []
-                    for row in rows:
-                        if row is None:
-                            continue
-                        if fw_idx >= len(row):
-                            continue
-                        raw = row[fw_idx]
-                        if raw is None:
-                            continue
-                        version = str(raw).strip()
-                        if not version:
-                            continue
-                        versions.append(version)
-
-                    if versions:
-                        entry = by_state.setdefault(
-                            sheet_name.strip(),
-                            {"state": sheet_name.strip(), "versions": []},
-                        )
-                        entry_versions = entry.setdefault("versions", [])
-                        for v in versions:
-                            if v not in entry_versions:
-                                entry_versions.append(v)
-            else:
-                warnings.append("No sheets found in Excel file.")
-    else:
-        warnings.append(f"Server input not found: {xlsx_path}")
-
-    if csv_path.exists():
-        import csv
-
-        with csv_path.open("r", encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle)
-            if not reader.fieldnames:
-                warnings.append("Firmware CSV has no headers.")
-            else:
-                headers = {_normalize_header(h): h for h in reader.fieldnames if h is not None}
-                state_header = headers.get("state")
-                version_header = (
-                    headers.get("ufw")
-                    or headers.get("version")
-                    or headers.get("firmwareversion")
-                    or headers.get("swversion")
-                )
-
-                if not version_header:
-                    warnings.append("Firmware CSV missing required column: UFW/version.")
-                else:
-                    for row in reader:
-                        if not row:
-                            continue
-                        version_raw = row.get(version_header)
-                        state_raw = row.get(state_header) if state_header else None
-
-                        version = str(version_raw).strip() if version_raw is not None else ""
-                        state = str(state_raw).strip() if state_raw is not None else ""
-                        if not state:
-                            state = default_state or ""
-                        if not state or not version:
-                            continue
-
-                        entry = by_state.setdefault(state, {"state": state, "versions": []})
-                        versions = entry.setdefault("versions", [])
-                        if version not in versions:
-                            versions.append(version)
-    else:
-        warnings.append(f"Firmware CSV not found: {csv_path}")
-
-    if not by_state:
-        details = "; ".join(warnings) if warnings else "No input data."
-        return False, f"No server data generated. {details}"
-
-    data = list(by_state.values())
-    for item in data:
-        if not item.get("versions"):
-            item["versions"] = []
-
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-    detail = "; ".join(warnings) if warnings else "OK"
-    return True, f"Generated {json_path} from inputs. {detail}"
-
-
 
 
 class MainWindow(QMainWindow):
@@ -397,7 +268,7 @@ class MainWindow(QMainWindow):
 
         self.stop_requested = False
         self._save_config()
-        self._generate_servers_json()
+        self._append_log("servers.json generation will be handled by the Java backend.")
 
         jar = find_jar(self.target_dir)
         if not jar:
@@ -467,19 +338,6 @@ class MainWindow(QMainWindow):
             "java",
             ["-Dfota.config=config.properties", "-jar", str(jar)],
         )
-
-    def _generate_servers_json(self) -> None:
-        json_path = self._resolve_path(self.firmware_json.text().strip())
-        ok, message = generate_servers_json_from_inputs(
-            self.server_inputs_xlsx,
-            self._resolve_path(self.firmware_csv.text().strip()),
-            json_path,
-            self.default_state.text().strip(),
-        )
-        if ok:
-            self._append_log(message)
-        else:
-            self._append_log(f"[WARN] {message}")
 
     def _resolve_path(self, value: str) -> Path:
         if not value:

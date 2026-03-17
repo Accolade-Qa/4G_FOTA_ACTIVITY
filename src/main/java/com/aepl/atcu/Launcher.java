@@ -7,6 +7,7 @@ import java.nio.file.Paths;
 import java.util.Properties;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
 import com.aepl.atcu.util.ServerExcelImporter;
 
 public class Launcher {
@@ -59,6 +60,14 @@ public class Launcher {
 			logger.info("Login JSON: {}", loginJson);
 			logger.info("Portal URL: {}", portalUrl);
 			logger.info("Default State: {}", defaultState);
+
+			boolean serversOk = ServerExcelImporter.updateServersJsonFromExcel(
+					Paths.get("input"),
+					Paths.get(firmwareJson),
+					defaultState);
+			if (!serversOk) {
+				logger.warn("servers.json was not updated from Excel. Check input folder and sheet contents.");
+			}
 
 			Orchestrator orch = new Orchestrator(serialPort, baudRate, auditCsv, firmwareJson, loginJson);
 			orch.start(portalUrl, portalUser, portalPass);
