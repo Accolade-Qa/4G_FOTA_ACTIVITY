@@ -1,16 +1,16 @@
 package com.aepl.atcu;
 
-import com.aepl.atcu.logic.FirmwareResolver;
-import com.aepl.atcu.web.FotaWebClient;
-import com.aepl.atcu.util.FotaFileGenerator;
-import com.aepl.atcu.util.LoginPacketInfo;
-import com.aepl.atcu.util.LoginPacketStore;
-
 import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import com.aepl.atcu.logic.FirmwareResolver;
+import com.aepl.atcu.util.FotaFileGenerator;
+import com.aepl.atcu.util.LoginPacketInfo;
+import com.aepl.atcu.util.LoginPacketStore;
+import com.aepl.atcu.web.FotaWebClient;
 
 /**
  * Simplified FOTA Orchestrator following a direct workflow:
@@ -37,6 +37,7 @@ public class Orchestrator {
     private final FirmwareResolver resolver;
     private final String auditCsvPath;
     private final String loginJsonPath;
+    private LoginPacketInfo pendingLoginPacket;
 
     private static boolean isValidUin(String uin) {
         return uin != null && uin.startsWith(UIN_PREFIX);
@@ -73,8 +74,12 @@ public class Orchestrator {
 
                 // STEP 1-3: Read serial logs, fire OTA command, observe login packet
                 logger.info("STEP 1-3: Waiting for login packet from device (timeout: 180s)...");
-                // serialReader.sendCommand("*SET#CRST#1#");
-                LoginPacketInfo loginInfo = waitForLoginPacket(180);
+                LoginPacketInfo loginInfo = pendingLoginPacket;
+                pendingLoginPacket = null;
+                if (loginInfo == null) {
+                    // serialReader.sendCommand("*SET#CRST#1#");
+                    loginInfo = waitForLoginPacket(180);
+                }
 
                 if (loginInfo == null) {
                     logger.error(
@@ -190,11 +195,11 @@ public class Orchestrator {
                 // STEP 9-10: Monitor for downloading completion
                 logger.info("STEP 9-10: Monitoring device for download completion...");
                 serialReader.pauseLoginCapture();
-                boolean downloadComplete = monitorDownloadProgress(batchName, nextVersion);
-
-                if (!downloadComplete) {
+                LoginPacketInfo latestLogin = monitorDownloadProgress(batchName, nextVersion);
+                if (latestLogin == null) {
                     handleDownloadFailure(loginInfo, currentVer, nextVersion);
                 } else {
+                    pendingLoginPacket = latestLogin;
                     logger.info("FOTA upgrade successful to version: {}", nextVersion);
                     FotaFileGenerator.writeAuditReport(auditCsvPath, loginInfo.uin, currentVer, nextVersion,
                             "SUCCESS", "Device rebooted and upgrade verified");
@@ -227,7 +232,7 @@ public class Orchestrator {
         return null;
     }
 
-    boolean monitorDownloadProgress(String batchName, String targetVersion) throws InterruptedException {
+    LoginPacketInfo monitorDownloadProgress(String batchName, String targetVersion) throws InterruptedException {
         int maxIterations = 1800;
         double lastProgress = -1;
         int stagnantCount = 0;
@@ -245,7 +250,7 @@ public class Orchestrator {
             if (stagnantCount >= MAX_STAGNANT) {
                 logger.error("Download progress stuck at {}% for {} seconds", progress, stagnantCount);
                 serialReader.resumeLoginCapture();
-                return false;
+                return null;
             }
 
             lastProgress = progress;
@@ -258,34 +263,49 @@ public class Orchestrator {
             if (progress >= 100.0) {
                 logger.info("Download reached 100%. Waiting for reboot and final login sequence...");
                 serialReader.resumeLoginCapture();
-                serialReader.resetState();
-                long overallStart = System.currentTimeMillis();
-                final long overallTimeoutMs = 120 * 1000L;
-                while ((System.currentTimeMillis() - overallStart) < overallTimeoutMs) {
-                    LoginPacketInfo newLogin = waitForLoginPacket(30);
-                    if (newLogin != null) {
-                        LoginPacketStore.persist(loginJsonPath, newLogin);
-                        if (targetVersion.equals(newLogin.version)) {
-                            logger.info("VERIFIED: Device rebooted successfully. New version: {}", newLogin.version);
-                            return true;
-                        } else {
-                            logger.info(
-                                    "Intermediate login packet version {} received, expecting {}. Waiting for next reboot...",
-                                    newLogin.version, targetVersion);
-                            serialReader.resetState();
-                            continue;
-                        }
-                    }
-                }
-                logger.error("Timeout waiting for login packet with target version {}", targetVersion);
-                return false;
+                LoginPacketInfo latest = waitForRebootLoginPackets(targetVersion, 3, 180);
+                return latest;
             }
 
             Thread.sleep(1000);
         }
 
         serialReader.resumeLoginCapture();
-        return false;
+        return null;
+    }
+
+    private LoginPacketInfo waitForRebootLoginPackets(String targetVersion, int rebootCount, int timeoutSeconds)
+            throws InterruptedException {
+        long overallStart = System.currentTimeMillis();
+        final long overallTimeoutMs = timeoutSeconds * 1000L;
+        int seen = 0;
+        LoginPacketInfo latest = null;
+
+        serialReader.resetState();
+        while ((System.currentTimeMillis() - overallStart) < overallTimeoutMs) {
+            LoginPacketInfo newLogin = waitForLoginPacket(30);
+            if (newLogin != null) {
+                LoginPacketStore.persist(loginJsonPath, newLogin);
+                latest = newLogin;
+                seen++;
+                logger.info("Reboot login packet {} of {} received. Version={}", seen, rebootCount, newLogin.version);
+                serialReader.resetState();
+                if (seen >= rebootCount) {
+                    break;
+                }
+            }
+        }
+
+        if (latest == null || seen < rebootCount) {
+            logger.error("Timeout waiting for {} reboot login packets", rebootCount);
+            return null;
+        }
+        if (!targetVersion.equals(latest.version)) {
+            logger.error("Latest login version {} does not match target {}", latest.version, targetVersion);
+            return null;
+        }
+        logger.info("VERIFIED: Device rebooted successfully. New version: {}", latest.version);
+        return latest;
     }
 
     /**

@@ -6,7 +6,7 @@
 
 	<groupId>com.aepl.atcu</groupId>
 	<artifactId>FOTA_ACTIVITY</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>Version-1.0.2</version>
 	<packaging>jar</packaging>
 
 	<name>FOTA_ACTIVITY</name>
@@ -126,6 +126,8 @@
 									implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
 									<mainClass>com.aepl.atcu.Launcher</mainClass>
 								</transformer>
+								<transformer
+									implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
 							</transformers>
 							<createDependencyReducedPom>false</createDependencyReducedPom>
 						</configuration>
