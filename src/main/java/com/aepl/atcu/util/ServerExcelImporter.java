@@ -27,6 +27,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 public class ServerExcelImporter {
 
     private static final Logger logger = LogManager.getLogger(ServerExcelImporter.class);
+    private static final java.util.regex.Pattern VERSION_PATTERN =
+            java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)+)");
+
+    private static final class FirmwareEntry {
+        private final String version;
+        private final String fileName;
+
+        private FirmwareEntry(String version, String fileName) {
+            this.version = version;
+            this.fileName = fileName;
+        }
+    }
     public static boolean updateServersJsonFromExcel(Path inputDir, Path outputJsonPath, String targetSheetName) {
         try {
             Path excelPath = findExcelFile(inputDir);
@@ -35,7 +47,7 @@ public class ServerExcelImporter {
                 return false;
             }
 
-            Map<String, List<String>> stateFirmware = parseExcel(excelPath, targetSheetName);
+            Map<String, List<FirmwareEntry>> stateFirmware = parseExcel(excelPath, targetSheetName);
             if (stateFirmware.isEmpty()) {
                 logger.warn("[EXCEL] No valid server/firmware rows found in {}", excelPath);
                 return false;
@@ -78,8 +90,8 @@ public class ServerExcelImporter {
         return excelFiles.get(0);
     }
 
-    private static Map<String, List<String>> parseExcel(Path excelPath, String targetSheetName) throws Exception {
-        Map<String, List<String>> result = new LinkedHashMap<>();
+    private static Map<String, List<FirmwareEntry>> parseExcel(Path excelPath, String targetSheetName) throws Exception {
+        Map<String, List<FirmwareEntry>> result = new LinkedHashMap<>();
         DataFormatter formatter = new DataFormatter();
 
         try (InputStream in = Files.newInputStream(excelPath);
@@ -111,6 +123,7 @@ public class ServerExcelImporter {
                 int lastCell = headerRow != null ? headerRow.getLastCellNum() : -1;
 
                 int fwCol = -1;
+                int fileCol = -1;
 
                 if (headerRow != null && lastCell > 0) {
                     for (int c = 0; c < lastCell; c++) {
@@ -120,7 +133,9 @@ public class ServerExcelImporter {
                         }
                         if (header.contains("firmwarename") || header.equals("firmware") || header.equals("version")) {
                             fwCol = c;
-                            break;
+                        } else if (header.contains("firmwarefilename") || header.equals("filename")
+                                || header.contains("firmwarefile")) {
+                            fileCol = c;
                         }
                     }
                 }
@@ -132,21 +147,26 @@ public class ServerExcelImporter {
                     fwCol = 1; // default to second column for "Firmware Name"
                 }
 
-                List<String> versions = new ArrayList<>();
+                List<FirmwareEntry> entries = new ArrayList<>();
                 for (int r = dataStartRow; r <= sheet.getLastRowNum(); r++) {
                     Row row = sheet.getRow(r);
                     if (row == null) {
                         continue;
                     }
 
-                    String v = formatCell(formatter, row.getCell(fwCol));
-                    if (v.isEmpty()) {
+                    String fwName = formatCell(formatter, row.getCell(fwCol));
+                    String fileName = fileCol >= 0 ? formatCell(formatter, row.getCell(fileCol)) : "";
+                    if (fwName.isEmpty() && (fileName == null || fileName.isEmpty())) {
                         continue;
                     }
-                    versions.add(v);
+                    String version = extractVersionFromCells(fwName, fileName);
+                    if (version.isEmpty()) {
+                        continue;
+                    }
+                    entries.add(new FirmwareEntry(version, fileName));
                 }
-                if (!versions.isEmpty()) {
-                    result.put(sheetName, versions);
+                if (!entries.isEmpty()) {
+                    result.put(sheetName, entries);
                 }
             }
         }
@@ -154,16 +174,27 @@ public class ServerExcelImporter {
         return result;
     }
 
-    private static void writeServersJson(Path outputJsonPath, Map<String, List<String>> stateFirmware)
+    private static void writeServersJson(Path outputJsonPath, Map<String, List<FirmwareEntry>> stateFirmware)
             throws IOException {
         ObjectMapper mapper = new ObjectMapper();
         ArrayNode root = mapper.createArrayNode();
-        for (Map.Entry<String, List<String>> entry : stateFirmware.entrySet()) {
+        for (Map.Entry<String, List<FirmwareEntry>> entry : stateFirmware.entrySet()) {
             ObjectNode node = mapper.createObjectNode();
             node.put("state", entry.getKey());
             ArrayNode versions = node.putArray("versions");
-            for (String v : entry.getValue()) {
-                versions.add(v);
+            ArrayNode firmware = node.putArray("firmware");
+            List<String> uniqueVersions = new ArrayList<>();
+            for (FirmwareEntry fw : entry.getValue()) {
+                if (!uniqueVersions.contains(fw.version)) {
+                    uniqueVersions.add(fw.version);
+                    versions.add(fw.version);
+                }
+                if (fw.fileName != null && !fw.fileName.isEmpty()) {
+                    ObjectNode fwNode = mapper.createObjectNode();
+                    fwNode.put("firmwareVersion", fw.version);
+                    fwNode.put("fileName", fw.fileName);
+                    firmware.add(fwNode);
+                }
             }
             root.add(node);
         }
@@ -185,4 +216,29 @@ public class ServerExcelImporter {
         return raw == null ? "" : raw.trim();
     }
 
+    private static String extractVersionFromCells(String firmwareName, String fileName) {
+        String fromName = extractVersionFromText(firmwareName);
+        if (!fromName.isEmpty()) {
+            return fromName;
+        }
+        String fromFile = extractVersionFromText(fileName);
+        if (!fromFile.isEmpty()) {
+            return fromFile;
+        }
+        return firmwareName == null ? "" : firmwareName.trim();
+    }
+
+    private static String extractVersionFromText(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        var matcher = VERSION_PATTERN.matcher(text);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return "";
+    }
+
 }
+
+

@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -158,17 +157,10 @@ class MainWindow(QMainWindow):
         self.baud_rate.setValue(115200)
         form.addRow("Baud Rate", self.baud_rate)
 
-        self.firmware_json = QLineEdit()
-        form.addRow("Servers JSON", self._with_browse(self.firmware_json, "Select servers.json"))
-
-        self.firmware_csv = QLineEdit()
-        form.addRow("Firmware CSV", self._with_browse(self.firmware_csv, "Select firmware CSV"))
-
-        self.audit_csv = QLineEdit()
-        form.addRow("Audit CSV", self._with_browse(self.audit_csv, "Select audit CSV"))
-
-        self.login_json = QLineEdit()
-        form.addRow("Login JSON", self._with_browse(self.login_json, "Select login JSON"))
+        self.firmware_json_value = "input/servers.json"
+        self.firmware_csv_value = "input/fota_batch.csv"
+        self.audit_csv_value = "results/fota_audit.csv"
+        self.login_json_value = "results/login_packets.json"
 
         self.portal_url = QLineEdit()
         form.addRow("Portal URL", self.portal_url)
@@ -207,22 +199,6 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(root)
 
-    def _with_browse(self, line_edit: QLineEdit, title: str) -> QWidget:
-        wrapper = QWidget()
-        row = QHBoxLayout(wrapper)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(line_edit, stretch=1)
-        browse = QPushButton("Browse")
-        browse.clicked.connect(lambda: self._browse_file(line_edit, title))
-        row.addWidget(browse)
-        return wrapper
-
-    def _browse_file(self, line_edit: QLineEdit, title: str) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, title, str(self.repo_root))
-        if path:
-            rel = os.path.relpath(path, self.repo_root)
-            line_edit.setText(rel)
-
     def _load_config(self) -> None:
         props = read_properties(self.config_path)
         def _get(key: str, default: str) -> str:
@@ -231,10 +207,10 @@ class MainWindow(QMainWindow):
 
         self.serial_port.setText(props.get("serial.port", ""))
         self.baud_rate.setValue(int(_get("serial.baud", "115200")))
-        self.firmware_json.setText(_get("firmware.json", "input/servers.json"))
-        self.firmware_csv.setText(_get("firmware.csv", "input/fota_batch.csv"))
-        self.audit_csv.setText(_get("audit.csv", "results/fota_audit.csv"))
-        self.login_json.setText(_get("login.json", "results/login_packets.json"))
+        self.firmware_json_value = _get("firmware.json", "input/servers.json")
+        self.firmware_csv_value = _get("firmware.csv", "input/fota_batch.csv")
+        self.audit_csv_value = _get("audit.csv", "results/fota_audit.csv")
+        self.login_json_value = _get("login.json", "results/login_packets.json")
         self.portal_url.setText(props.get("login.url", ""))
         self.portal_user.setText(props.get("login.user", ""))
         self.portal_pass.setText(props.get("login.pass", ""))
@@ -244,10 +220,10 @@ class MainWindow(QMainWindow):
         return {
             "serial.port": self.serial_port.text().strip(),
             "serial.baud": str(self.baud_rate.value()),
-            "firmware.csv": self.firmware_csv.text().strip(),
-            "audit.csv": self.audit_csv.text().strip(),
-            "firmware.json": self.firmware_json.text().strip(),
-            "login.json": self.login_json.text().strip(),
+            "firmware.csv": self.firmware_csv_value,
+            "audit.csv": self.audit_csv_value,
+            "firmware.json": self.firmware_json_value,
+            "login.json": self.login_json_value,
             "login.url": self.portal_url.text().strip(),
             "login.user": self.portal_user.text().strip(),
             "login.pass": self.portal_pass.text().strip(),

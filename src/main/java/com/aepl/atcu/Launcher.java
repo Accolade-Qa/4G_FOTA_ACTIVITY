@@ -14,7 +14,7 @@ public class Launcher {
 	private static final Logger logger = LogManager.getLogger(Launcher.class);
 	private static String currentState = null;
 	private static String defaultState = null;
-	private static final String DEFAULT_STATE = "DO NOT DELETE";
+	private static final String DEFAULT_STATE = "Bihar";
 	private static final String SERIAL_PORT_DEFAULT = "";
 	private static final int BAUD_RATE_DEFAULT = 115200;
 	private static final String FIRMWARE_JSON_DEFAULT = "input/servers.json";

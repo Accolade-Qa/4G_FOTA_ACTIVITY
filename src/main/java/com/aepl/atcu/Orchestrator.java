@@ -100,6 +100,8 @@ public class Orchestrator {
                     continue;
                 }
 
+                LoginPacketInfo previousLogin = LoginPacketStore.loadLatestForImei(loginJsonPath, loginInfo.imei);
+
                 // STEP 4: Store login packet info
                 logger.info("STEP 4: Login packet received and stored");
                 LoginPacketStore.persist(loginJsonPath, loginInfo);
@@ -139,6 +141,14 @@ public class Orchestrator {
                     continue;
                 }
 
+                if (previousLogin != null
+                        && isSameOrOlderVersion(deviceState, currentVer, previousLogin.version)) {
+                    logger.info(
+                            "Skipping FOTA flow: current version '{}' is same or older than last recorded version '{}' for UIN {}",
+                            currentVer, previousLogin.version, loginInfo.uin);
+                    serialReader.resetState();
+                    continue;
+                }
                 // STEP 6: Compare version with JSON, get next version
                 logger.info("STEP 6: Checking if device needs upgrade...");
                 String nextVersion = resolver.resolveNextVersion(deviceState, currentVer);
@@ -215,6 +225,34 @@ public class Orchestrator {
         }
     }
 
+    private boolean isSameOrOlderVersion(String state, String currentVersion, String previousVersion) {
+        if (state == null || currentVersion == null || previousVersion == null) {
+            return false;
+        }
+        List<String> versions = resolver.getVersionsForState(state);
+        if (versions.isEmpty()) {
+            return false;
+        }
+        int currentIndex = findVersionIndex(versions, currentVersion);
+        int previousIndex = findVersionIndex(versions, previousVersion);
+        if (currentIndex < 0 || previousIndex < 0) {
+            return false;
+        }
+        return currentIndex <= previousIndex;
+    }
+
+    private int findVersionIndex(List<String> versions, String version) {
+        if (versions == null || version == null) {
+            return -1;
+        }
+        String normalized = version.trim();
+        for (int i = 0; i < versions.size(); i++) {
+            if (versions.get(i).equalsIgnoreCase(normalized)) {
+                return i;
+            }
+        }
+        return -1;
+    }
     LoginPacketInfo waitForLoginPacket(int timeoutSeconds) throws InterruptedException {
         long startTime = System.currentTimeMillis();
         long timeoutMs = timeoutSeconds * 1000L;
@@ -359,3 +397,6 @@ public class Orchestrator {
         }
     }
 }
+
+
+
