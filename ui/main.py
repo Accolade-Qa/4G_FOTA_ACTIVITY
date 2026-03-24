@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -107,11 +108,8 @@ class MainWindow(QMainWindow):
     def _is_repo_root(self, path: Path) -> bool:
         if not path.exists() or not path.is_dir():
             return False
-        if (path / "pom.xml").exists():
-            return True
-        if (path / "config.properties").exists() and (path / "src").exists():
-            return True
-        return False
+        # Require pom.xml to avoid mistaking the PyInstaller dist folder for repo root.
+        return (path / "pom.xml").exists()
 
     def _resolve_repo_root(self) -> Path:
         candidates: list[Path] = []
@@ -138,6 +136,12 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
                 return chosen_path
+
+        QMessageBox.warning(
+            None,
+            APP_TITLE,
+            "Could not locate the repo root. Please select the folder that contains pom.xml.",
+        )
 
         return Path(__file__).resolve().parents[1]
 
@@ -243,6 +247,17 @@ class MainWindow(QMainWindow):
     def _run_maven_build(self) -> None:
         if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
             return
+        mvn = shutil.which("mvn") or shutil.which("mvn.cmd")
+        if not mvn:
+            self._append_log("Maven not found on PATH. Please install Maven or add it to PATH.")
+            QMessageBox.warning(
+                self,
+                APP_TITLE,
+                "Maven not found on PATH. Please install Maven or add it to PATH.",
+            )
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            return
         self.build_process = QProcess(self)
         self.build_process.setWorkingDirectory(str(self.repo_root))
         self.build_process.readyReadStandardOutput.connect(
@@ -258,7 +273,7 @@ class MainWindow(QMainWindow):
         self._append_log("Running Maven build: mvn -q -DskipTests package")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
-        self.build_process.start("mvn", ["-q", "-DskipTests", "package"])
+        self.build_process.start(mvn, ["-q", "-DskipTests", "package"])
 
     def _on_build_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self.build_process = None
