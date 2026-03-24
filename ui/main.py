@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -22,9 +23,32 @@ from PyQt6.QtWidgets import (
 
 
 APP_TITLE = "FOTA Automation UI"
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-LOGO_PATH = ASSETS_DIR / "logo.png"
 LAST_REPO_PATH_FILE = Path.home() / ".fota_ui_repo_root"
+USER_DATA_DIR = Path.home() / ".fota_ui"
+
+
+def _is_frozen() -> bool:
+    return getattr(sys, "frozen", False)
+
+
+def _app_base_dir() -> Path:
+    if _is_frozen():
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def _resource_dir() -> Path:
+    if _is_frozen() and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent
+
+
+def _resource_path(rel_path: str) -> Path:
+    return _resource_dir() / rel_path
+
+
+ASSETS_DIR = _resource_path("assets")
+LOGO_PATH = ASSETS_DIR / "logo.png"
 
 
 def read_properties(path: Path) -> dict:
@@ -100,9 +124,32 @@ class MainWindow(QMainWindow):
 
     def _apply_repo_root(self, repo_root: Path) -> None:
         self.repo_root = repo_root
-        self.config_path = repo_root / "config.properties"
-        self.target_dir = repo_root / "target"
-        self.input_dir = repo_root / "input"
+        if _is_frozen():
+            USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            self.config_path = USER_DATA_DIR / "config.properties"
+            self.input_dir = USER_DATA_DIR / "input"
+            self.results_dir = USER_DATA_DIR / "results"
+            self.logs_dir = USER_DATA_DIR / "logs"
+            self.output_dir = USER_DATA_DIR / "output"
+            self.screenshots_dir = USER_DATA_DIR / "screenshots"
+            for d in (
+                self.input_dir,
+                self.results_dir,
+                self.logs_dir,
+                self.output_dir,
+                self.screenshots_dir,
+            ):
+                d.mkdir(parents=True, exist_ok=True)
+            self.target_dir = _resource_path("backend")
+            self._seed_default_inputs()
+        else:
+            self.config_path = repo_root / "config.properties"
+            self.target_dir = repo_root / "target"
+            self.input_dir = repo_root / "input"
+            self.results_dir = repo_root / "results"
+            self.logs_dir = repo_root / "logs"
+            self.output_dir = repo_root / "output"
+            self.screenshots_dir = repo_root / "screenshots"
         self.server_inputs_xlsx = self.input_dir / "Server_Inputs.xlsx"
 
     def _is_repo_root(self, path: Path) -> bool:
@@ -112,6 +159,9 @@ class MainWindow(QMainWindow):
         return (path / "pom.xml").exists()
 
     def _resolve_repo_root(self) -> Path:
+        if _is_frozen():
+            # Standalone mode: use the app directory as root (backend JAR and runtime live here).
+            return _app_base_dir()
         candidates: list[Path] = []
         if LAST_REPO_PATH_FILE.exists():
             try:
@@ -144,6 +194,21 @@ class MainWindow(QMainWindow):
         )
 
         return Path(__file__).resolve().parents[1]
+
+    def _seed_default_inputs(self) -> None:
+        # Copy bundled defaults into user data dir if missing.
+        defaults_dir = _resource_path("defaults")
+        if not defaults_dir.exists():
+            return
+        for item in defaults_dir.iterdir():
+            if not item.is_file():
+                continue
+            dest = self.input_dir / item.name
+            if not dest.exists():
+                try:
+                    shutil.copy2(item, dest)
+                except Exception:
+                    pass
 
     def _init_ui(self) -> None:
         root = QWidget()
@@ -245,6 +310,11 @@ class MainWindow(QMainWindow):
         self._run_java(jar)
 
     def _run_maven_build(self) -> None:
+        if _is_frozen():
+            self._append_log("Build is not available in standalone mode.")
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            return
         if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
             return
         mvn = shutil.which("mvn") or shutil.which("mvn.cmd")
@@ -297,7 +367,10 @@ class MainWindow(QMainWindow):
 
     def _run_java(self, jar: Path) -> None:
         self.backend_process = QProcess(self)
-        self.backend_process.setWorkingDirectory(str(self.repo_root))
+        if _is_frozen():
+            self.backend_process.setWorkingDirectory(str(USER_DATA_DIR))
+        else:
+            self.backend_process.setWorkingDirectory(str(self.repo_root))
         self.backend_process.readyReadStandardOutput.connect(
             lambda: self._append_process_output(self.backend_process)
         )
@@ -311,10 +384,29 @@ class MainWindow(QMainWindow):
         self._append_log(f"Starting backend: {jar.name}")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        java_cmd = self._resolve_java_cmd()
+        if not java_cmd:
+            self._append_log("Java runtime not found. Please install Java 21+ or bundle a runtime.")
+            QMessageBox.warning(
+                self,
+                APP_TITLE,
+                "Java runtime not found. Please install Java 21+ or bundle a runtime.",
+            )
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            return
         self.backend_process.start(
-            "java",
-            ["-Dfota.config=config.properties", "-jar", str(jar)],
+            java_cmd,
+            [f"-Dfota.config={self.config_path}", "-jar", str(jar)],
         )
+
+    def _resolve_java_cmd(self) -> str | None:
+        # Prefer bundled runtime in standalone mode.
+        if _is_frozen():
+            runtime_java = _resource_path("runtime") / "bin" / "java.exe"
+            if runtime_java.exists():
+                return str(runtime_java)
+        return shutil.which("java")
 
     def _resolve_path(self, value: str) -> Path:
         if not value:

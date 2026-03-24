@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('D:\\AEPL_AUTOMATION\\FOTA_ACTIVITY\\ui\\assets\\logo.png', 'assets')],
+    datas=[('D:\\AEPL_AUTOMATION\\FOTA_ACTIVITY\\ui\\assets\\logo.png', 'assets'), ('D:\\AEPL_AUTOMATION\\FOTA_ACTIVITY\\ui\\defaults', 'defaults'), ('D:\\AEPL_AUTOMATION\\FOTA_ACTIVITY\\ui\\backend', 'backend'), ('D:\\AEPL_AUTOMATION\\FOTA_ACTIVITY\\ui\\runtime', 'runtime')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
