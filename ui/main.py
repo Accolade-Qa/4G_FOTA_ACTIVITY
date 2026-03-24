@@ -15,7 +15,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QFileDialog,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -148,15 +147,6 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
 
-        self.serial_port = QLineEdit()
-        self.serial_port.setPlaceholderText("COM3 or leave empty for auto-detect")
-        form.addRow("Serial Port", self.serial_port)
-
-        self.baud_rate = QSpinBox()
-        self.baud_rate.setRange(1200, 1000000)
-        self.baud_rate.setValue(115200)
-        form.addRow("Baud Rate", self.baud_rate)
-
         self.firmware_json_value = "input/servers.json"
         self.firmware_csv_value = "input/fota_batch.csv"
         self.audit_csv_value = "results/fota_audit.csv"
@@ -205,8 +195,6 @@ class MainWindow(QMainWindow):
             value = props.get(key, "").strip()
             return value if value else default
 
-        self.serial_port.setText(props.get("serial.port", ""))
-        self.baud_rate.setValue(int(_get("serial.baud", "115200")))
         self.firmware_json_value = _get("firmware.json", "input/servers.json")
         self.firmware_csv_value = _get("firmware.csv", "input/fota_batch.csv")
         self.audit_csv_value = _get("audit.csv", "results/fota_audit.csv")
@@ -218,8 +206,6 @@ class MainWindow(QMainWindow):
 
     def _collect_config(self) -> dict:
         return {
-            "serial.port": self.serial_port.text().strip(),
-            "serial.baud": str(self.baud_rate.value()),
             "firmware.csv": self.firmware_csv_value,
             "audit.csv": self.audit_csv_value,
             "firmware.json": self.firmware_json_value,

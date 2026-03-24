@@ -193,7 +193,7 @@ public class Orchestrator {
                     webSuccess = webClient.createBatch(batchName, "FOTA to version " + nextVersion, batchFilePath);
                     logger.info("Web batch creation result: {}", webSuccess);
                 } catch (Exception e) {
-                    logger.error("Web client error: {}", e.getMessage());
+                    logger.error("Web client error", e);
                     webSuccess = false;
                 }
 

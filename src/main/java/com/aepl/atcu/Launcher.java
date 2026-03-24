@@ -49,6 +49,11 @@ public class Launcher {
 			String portalUrl = getProp(props, "login.url", PORTAL_URL_DEFAULT);
 			String portalUser = getProp(props, "login.user", PORTAL_USER_DEFAULT);
 			String portalPass = getProp(props, "login.pass", PORTAL_PASS_DEFAULT);
+            String chromeDriver = getProp(props, "webdriver.chrome.driver", "");
+            if (chromeDriver != null && !chromeDriver.trim().isEmpty()) {
+                System.setProperty("webdriver.chrome.driver", chromeDriver.trim());
+                logger.info("ChromeDriver Path: {}", chromeDriver);
+            }
 
 			logger.info("===== FOTA AUTOMATION LAUNCHER =====");
 			logger.info("Serial Port: {}",
@@ -58,6 +63,7 @@ public class Launcher {
 			logger.info("Audit CSV: {}", auditCsv);
 			logger.info("Login JSON: {}", loginJson);
 			logger.info("Portal URL: {}", portalUrl);
+            logger.info("ChromeDriver Path: {}", chromeDriver.isEmpty() ? "(auto)" : chromeDriver);
 			logger.info("Default State: {}", defaultState);
 
 			boolean serversOk = ServerExcelImporter.updateServersJsonFromExcel(
