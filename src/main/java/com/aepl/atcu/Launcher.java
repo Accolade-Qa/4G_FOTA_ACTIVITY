@@ -35,6 +35,7 @@ public class Launcher {
 	public static void setCurrentState(String state) {
 		currentState = state;
 	}
+	@SuppressWarnings("null")
 	public static void main(String[] args) {
 		setupDirectories();
 
