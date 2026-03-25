@@ -47,6 +47,17 @@ def _resource_path(rel_path: str) -> Path:
     return _resource_dir() / rel_path
 
 
+def _is_writable_dir(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write_test"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
 ASSETS_DIR = _resource_path("assets")
 LOGO_PATH = ASSETS_DIR / "logo.png"
 
@@ -125,13 +136,16 @@ class MainWindow(QMainWindow):
     def _apply_repo_root(self, repo_root: Path) -> None:
         self.repo_root = repo_root
         if _is_frozen():
-            USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
-            self.config_path = USER_DATA_DIR / "config.properties"
-            self.input_dir = USER_DATA_DIR / "input"
-            self.results_dir = USER_DATA_DIR / "results"
-            self.logs_dir = USER_DATA_DIR / "logs"
-            self.output_dir = USER_DATA_DIR / "output"
-            self.screenshots_dir = USER_DATA_DIR / "screenshots"
+            data_dir = _app_base_dir()
+            if not _is_writable_dir(data_dir):
+                data_dir = USER_DATA_DIR
+            self.data_dir = data_dir
+            self.config_path = data_dir / "config.properties"
+            self.input_dir = data_dir / "input"
+            self.results_dir = data_dir / "results"
+            self.logs_dir = data_dir / "logs"
+            self.output_dir = data_dir / "output"
+            self.screenshots_dir = data_dir / "screenshots"
             for d in (
                 self.input_dir,
                 self.results_dir,
@@ -143,6 +157,7 @@ class MainWindow(QMainWindow):
             self.target_dir = _resource_path("backend")
             self._seed_default_inputs()
         else:
+            self.data_dir = repo_root
             self.config_path = repo_root / "config.properties"
             self.target_dir = repo_root / "target"
             self.input_dir = repo_root / "input"
@@ -257,6 +272,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log, stretch=1)
 
         self.setCentralWidget(root)
+        if hasattr(self, "data_dir"):
+            self._append_log(f"Data directory: {self.data_dir}")
 
     def _load_config(self) -> None:
         props = read_properties(self.config_path)
@@ -368,7 +385,7 @@ class MainWindow(QMainWindow):
     def _run_java(self, jar: Path) -> None:
         self.backend_process = QProcess(self)
         if _is_frozen():
-            self.backend_process.setWorkingDirectory(str(USER_DATA_DIR))
+            self.backend_process.setWorkingDirectory(str(self.data_dir))
         else:
             self.backend_process.setWorkingDirectory(str(self.repo_root))
         self.backend_process.readyReadStandardOutput.connect(
