@@ -5,7 +5,10 @@ a = Analysis(
     ['ui\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('ui\\backend', 'backend'),
+        ('ui\\defaults', 'defaults'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -42,3 +45,6 @@ coll = COLLECT(
     upx_exclude=[],
     name='FOTA_UI',
 )
+
+
+

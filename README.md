@@ -88,4 +88,8 @@ ui\dist\FOTA_UI\FOTA_UI.exe
 - The PyInstaller spec bundles ui/backend/ (includes the backend JAR).
 - The PyInstaller spec bundles ui/runtime/ (Java runtime).
 - Logs are written under logs/.
-- Results are written under esults/.
+- Results are written under 
+esults/.
+
+
+## python -m http.server 8000 --bind 0.0.0.0   

@@ -23,6 +23,7 @@ public class Launcher {
 	private static final String PORTAL_URL_DEFAULT = "http://aepl-tcu4g-qa.accoladeelectronics.com:6102/login";
 	private static final String PORTAL_USER_DEFAULT = "suraj.bhalerao@accoladeelectronics.com";
 	private static final String PORTAL_PASS_DEFAULT = "79hqelye";
+	private static final String CHROME_DRIVER_DEFAULT = "D:\\Software\\chromedriver-win64\\chromedriver.exe";
 
 	public static String getDefaultState() {
 		return defaultState == null ? DEFAULT_STATE : defaultState;
@@ -50,7 +51,7 @@ public class Launcher {
 			String portalUrl = getProp(props, "login.url", PORTAL_URL_DEFAULT);
 			String portalUser = getProp(props, "login.user", PORTAL_USER_DEFAULT);
 			String portalPass = getProp(props, "login.pass", PORTAL_PASS_DEFAULT);
-            String chromeDriver = getProp(props, "webdriver.chrome.driver", "");
+            String chromeDriver = getProp(props, "webdriver.chrome.driver", CHROME_DRIVER_DEFAULT);
             if (chromeDriver != null && !chromeDriver.trim().isEmpty()) {
                 System.setProperty("webdriver.chrome.driver", chromeDriver.trim());
                 logger.info("ChromeDriver Path: {}", chromeDriver);
