@@ -1,6 +1,8 @@
 import json
 import os
+import shutil
 import sys
+import uuid
 from pathlib import Path
 
 from PyQt6.QtCore import QProcess, Qt, QTimer
@@ -16,16 +18,61 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QFileDialog,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 
 APP_TITLE = "FOTA Automation UI"
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-LOGO_PATH = ASSETS_DIR / "logo.png"
 LAST_REPO_PATH_FILE = Path.home() / ".fota_ui_repo_root"
+USER_DATA_DIR = Path.home() / ".fota_ui"
+
+
+def _is_frozen() -> bool:
+    return getattr(sys, "frozen", False)
+
+
+def _app_base_dir() -> Path:
+    if _is_frozen():
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def _resource_dir() -> Path:
+    if _is_frozen() and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent
+
+
+def _resource_path(rel_path: str) -> Path:
+    return _resource_dir() / rel_path
+
+
+def _is_writable_dir(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write_test"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+ASSETS_DIR = _resource_path("assets")
+LOGO_PATH = ASSETS_DIR / "logo.png"
+
+
+def _apply_windows_app_id() -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        app_id = "com.aepl.fota.automation.ui"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
 
 
 def read_properties(path: Path) -> dict:
@@ -92,6 +139,9 @@ class MainWindow(QMainWindow):
         self._apply_repo_root(self.repo_root)
 
         self.backend_process: QProcess | None = None
+        self.backend_pid: int | None = None
+        self.backend_jar_name: str | None = None
+        self.backend_marker: str | None = None
         self.build_process: QProcess | None = None
         self.stop_requested = False
 
@@ -101,21 +151,48 @@ class MainWindow(QMainWindow):
 
     def _apply_repo_root(self, repo_root: Path) -> None:
         self.repo_root = repo_root
-        self.config_path = repo_root / "config.properties"
-        self.target_dir = repo_root / "target"
-        self.input_dir = repo_root / "input"
+        if _is_frozen():
+            data_dir = _app_base_dir()
+            if not _is_writable_dir(data_dir):
+                data_dir = USER_DATA_DIR
+            self.data_dir = data_dir
+            self.config_path = data_dir / "config.properties"
+            self.input_dir = data_dir / "input"
+            self.results_dir = data_dir / "results"
+            self.logs_dir = data_dir / "logs"
+            self.output_dir = data_dir / "output"
+            self.screenshots_dir = data_dir / "screenshots"
+            for d in (
+                self.input_dir,
+                self.results_dir,
+                self.logs_dir,
+                self.output_dir,
+                self.screenshots_dir,
+            ):
+                d.mkdir(parents=True, exist_ok=True)
+            self.target_dir = _resource_path("backend")
+            self._seed_default_inputs()
+        else:
+            self.data_dir = repo_root
+            self.config_path = repo_root / "config.properties"
+            self.target_dir = repo_root / "target"
+            self.input_dir = repo_root / "input"
+            self.results_dir = repo_root / "results"
+            self.logs_dir = repo_root / "logs"
+            self.output_dir = repo_root / "output"
+            self.screenshots_dir = repo_root / "screenshots"
         self.server_inputs_xlsx = self.input_dir / "Server_Inputs.xlsx"
 
     def _is_repo_root(self, path: Path) -> bool:
         if not path.exists() or not path.is_dir():
             return False
-        if (path / "pom.xml").exists():
-            return True
-        if (path / "config.properties").exists() and (path / "src").exists():
-            return True
-        return False
+        # Require pom.xml to avoid mistaking the PyInstaller dist folder for repo root.
+        return (path / "pom.xml").exists()
 
     def _resolve_repo_root(self) -> Path:
+        if _is_frozen():
+            # Standalone mode: use the app directory as root (backend JAR and runtime live here).
+            return _app_base_dir()
         candidates: list[Path] = []
         if LAST_REPO_PATH_FILE.exists():
             try:
@@ -141,7 +218,28 @@ class MainWindow(QMainWindow):
                     pass
                 return chosen_path
 
+        QMessageBox.warning(
+            None,
+            APP_TITLE,
+            "Could not locate the repo root. Please select the folder that contains pom.xml.",
+        )
+
         return Path(__file__).resolve().parents[1]
+
+    def _seed_default_inputs(self) -> None:
+        # Copy bundled defaults into user data dir if missing.
+        defaults_dir = _resource_path("defaults")
+        if not defaults_dir.exists():
+            return
+        for item in defaults_dir.iterdir():
+            if not item.is_file():
+                continue
+            dest = self.input_dir / item.name
+            if not dest.exists():
+                try:
+                    shutil.copy2(item, dest)
+                except Exception:
+                    pass
 
     def _init_ui(self) -> None:
         root = QWidget()
@@ -149,26 +247,10 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
 
-        self.serial_port = QLineEdit()
-        self.serial_port.setPlaceholderText("COM3 or leave empty for auto-detect")
-        form.addRow("Serial Port", self.serial_port)
-
-        self.baud_rate = QSpinBox()
-        self.baud_rate.setRange(1200, 1000000)
-        self.baud_rate.setValue(115200)
-        form.addRow("Baud Rate", self.baud_rate)
-
-        self.firmware_json = QLineEdit()
-        form.addRow("Servers JSON", self._with_browse(self.firmware_json, "Select servers.json"))
-
-        self.firmware_csv = QLineEdit()
-        form.addRow("Firmware CSV", self._with_browse(self.firmware_csv, "Select firmware CSV"))
-
-        self.audit_csv = QLineEdit()
-        form.addRow("Audit CSV", self._with_browse(self.audit_csv, "Select audit CSV"))
-
-        self.login_json = QLineEdit()
-        form.addRow("Login JSON", self._with_browse(self.login_json, "Select login JSON"))
+        self.firmware_json_value = "input/servers.json"
+        self.firmware_csv_value = "input/fota_batch.csv"
+        self.audit_csv_value = "results/fota_audit.csv"
+        self.login_json_value = "results/login_packets.json"
 
         self.portal_url = QLineEdit()
         form.addRow("Portal URL", self.portal_url)
@@ -206,22 +288,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log, stretch=1)
 
         self.setCentralWidget(root)
-
-    def _with_browse(self, line_edit: QLineEdit, title: str) -> QWidget:
-        wrapper = QWidget()
-        row = QHBoxLayout(wrapper)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(line_edit, stretch=1)
-        browse = QPushButton("Browse")
-        browse.clicked.connect(lambda: self._browse_file(line_edit, title))
-        row.addWidget(browse)
-        return wrapper
-
-    def _browse_file(self, line_edit: QLineEdit, title: str) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, title, str(self.repo_root))
-        if path:
-            rel = os.path.relpath(path, self.repo_root)
-            line_edit.setText(rel)
+        if hasattr(self, "data_dir"):
+            self._append_log(f"Data directory: {self.data_dir}")
 
     def _load_config(self) -> None:
         props = read_properties(self.config_path)
@@ -229,12 +297,10 @@ class MainWindow(QMainWindow):
             value = props.get(key, "").strip()
             return value if value else default
 
-        self.serial_port.setText(props.get("serial.port", ""))
-        self.baud_rate.setValue(int(_get("serial.baud", "115200")))
-        self.firmware_json.setText(_get("firmware.json", "input/servers.json"))
-        self.firmware_csv.setText(_get("firmware.csv", "input/fota_batch.csv"))
-        self.audit_csv.setText(_get("audit.csv", "results/fota_audit.csv"))
-        self.login_json.setText(_get("login.json", "results/login_packets.json"))
+        self.firmware_json_value = _get("firmware.json", "input/servers.json")
+        self.firmware_csv_value = _get("firmware.csv", "input/fota_batch.csv")
+        self.audit_csv_value = _get("audit.csv", "results/fota_audit.csv")
+        self.login_json_value = _get("login.json", "results/login_packets.json")
         self.portal_url.setText(props.get("login.url", ""))
         self.portal_user.setText(props.get("login.user", ""))
         self.portal_pass.setText(props.get("login.pass", ""))
@@ -242,12 +308,10 @@ class MainWindow(QMainWindow):
 
     def _collect_config(self) -> dict:
         return {
-            "serial.port": self.serial_port.text().strip(),
-            "serial.baud": str(self.baud_rate.value()),
-            "firmware.csv": self.firmware_csv.text().strip(),
-            "audit.csv": self.audit_csv.text().strip(),
-            "firmware.json": self.firmware_json.text().strip(),
-            "login.json": self.login_json.text().strip(),
+            "firmware.csv": self.firmware_csv_value,
+            "audit.csv": self.audit_csv_value,
+            "firmware.json": self.firmware_json_value,
+            "login.json": self.login_json_value,
             "login.url": self.portal_url.text().strip(),
             "login.user": self.portal_user.text().strip(),
             "login.pass": self.portal_pass.text().strip(),
@@ -267,6 +331,8 @@ class MainWindow(QMainWindow):
             return
 
         self.stop_requested = False
+        # Clean up any orphaned backend processes before starting a new one.
+        self._kill_all_backends_by_cmdline()
         self._save_config()
         self._append_log("servers.json generation will be handled by the Java backend.")
 
@@ -279,7 +345,23 @@ class MainWindow(QMainWindow):
         self._run_java(jar)
 
     def _run_maven_build(self) -> None:
+        if _is_frozen():
+            self._append_log("Build is not available in standalone mode.")
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            return
         if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
+            return
+        mvn = shutil.which("mvn") or shutil.which("mvn.cmd")
+        if not mvn:
+            self._append_log("Maven not found on PATH. Please install Maven or add it to PATH.")
+            QMessageBox.warning(
+                self,
+                APP_TITLE,
+                "Maven not found on PATH. Please install Maven or add it to PATH.",
+            )
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
             return
         self.build_process = QProcess(self)
         self.build_process.setWorkingDirectory(str(self.repo_root))
@@ -296,7 +378,7 @@ class MainWindow(QMainWindow):
         self._append_log("Running Maven build: mvn -q -DskipTests package")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
-        self.build_process.start("mvn", ["-q", "-DskipTests", "package"])
+        self.build_process.start(mvn, ["-q", "-DskipTests", "package"])
 
     def _on_build_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self.build_process = None
@@ -320,7 +402,14 @@ class MainWindow(QMainWindow):
 
     def _run_java(self, jar: Path) -> None:
         self.backend_process = QProcess(self)
-        self.backend_process.setWorkingDirectory(str(self.repo_root))
+        self.backend_pid = None
+        self.backend_jar_name = jar.name
+        self.backend_marker = f"fota-ui-{uuid.uuid4()}"
+        if _is_frozen():
+            self.backend_process.setWorkingDirectory(str(self.data_dir))
+        else:
+            self.backend_process.setWorkingDirectory(str(self.repo_root))
+        self.backend_process.started.connect(self._on_backend_started)
         self.backend_process.readyReadStandardOutput.connect(
             lambda: self._append_process_output(self.backend_process)
         )
@@ -334,10 +423,34 @@ class MainWindow(QMainWindow):
         self._append_log(f"Starting backend: {jar.name}")
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        java_cmd = self._resolve_java_cmd()
+        if not java_cmd:
+            self._append_log("Java runtime not found. Please install Java 21+ or bundle a runtime.")
+            QMessageBox.warning(
+                self,
+                APP_TITLE,
+                "Java runtime not found. Please install Java 21+ or bundle a runtime.",
+            )
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            return
         self.backend_process.start(
-            "java",
-            ["-Dfota.config=config.properties", "-jar", str(jar)],
+            java_cmd,
+            [
+                f"-Dfota.config={self.config_path}",
+                f"-Dfota.ui.marker={self.backend_marker}",
+                "-jar",
+                str(jar),
+            ],
         )
+
+    def _resolve_java_cmd(self) -> str | None:
+        # Prefer bundled runtime in standalone mode.
+        if _is_frozen():
+            runtime_java = _resource_path("runtime") / "bin" / "java.exe"
+            if runtime_java.exists():
+                return str(runtime_java)
+        return shutil.which("java")
 
     def _resolve_path(self, value: str) -> Path:
         if not value:
@@ -354,11 +467,16 @@ class MainWindow(QMainWindow):
             self._stop_process(self.backend_process, "Backend")
             self.backend_process = None
             self._append_log("Backend stopped.")
+        else:
+            self._kill_all_backends_by_cmdline()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
 
     def _on_backend_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self.backend_process = None
+        self.backend_pid = None
+        self.backend_jar_name = None
+        self.backend_marker = None
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         if self.stop_requested:
@@ -388,6 +506,14 @@ class MainWindow(QMainWindow):
             return
         self.log.appendPlainText(text)
 
+    def _on_backend_started(self) -> None:
+        if self.backend_process is None:
+            return
+        pid = self.backend_process.processId()
+        if pid:
+            self.backend_pid = pid
+            self._append_log(f"Backend PID: {pid}")
+
     def _stop_process(self, proc: QProcess, label: str) -> None:
         proc.terminate()
         proc.waitForFinished(5000)
@@ -395,17 +521,43 @@ class MainWindow(QMainWindow):
             self._append_log(f"{label} did not stop on terminate; killing...")
             proc.kill()
             proc.waitForFinished(3000)
-        if proc.state() != QProcess.ProcessState.NotRunning:
-            pid = proc.processId()
-            if pid:
-                try:
-                    if sys.platform.startswith("win"):
-                        QProcess.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
-                    else:
-                        QProcess.execute("kill", ["-9", str(pid)])
-                    proc.waitForFinished(3000)
-                except Exception as exc:
-                    self._append_log(f"{label} force kill failed: {exc}")
+        pid = proc.processId()
+        if label == "Backend" and self.backend_pid:
+            pid = self.backend_pid
+        if proc.state() != QProcess.ProcessState.NotRunning and pid:
+            try:
+                if sys.platform.startswith("win"):
+                    QProcess.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
+                else:
+                    QProcess.execute("kill", ["-9", str(pid)])
+                proc.waitForFinished(3000)
+            except Exception as exc:
+                self._append_log(f"{label} force kill failed: {exc}")
+        if label == "Backend":
+            self._kill_all_backends_by_cmdline()
+
+    def _kill_all_backends_by_cmdline(self) -> None:
+        if not sys.platform.startswith("win"):
+            return
+        marker = self.backend_marker
+        jar_name = self.backend_jar_name
+        if not marker and not jar_name:
+            return
+        cond = []
+        if marker:
+            cond.append(f"$_.CommandLine -like '*{marker}*'")
+        if jar_name:
+            cond.append(f"$_.CommandLine -like '*{jar_name}*'")
+        where_clause = " -or ".join(cond)
+        ps = (
+            "Get-CimInstance Win32_Process | "
+            f"Where-Object {{ ($_.Name -eq 'java.exe' -or $_.Name -eq 'javaw.exe') -and ({where_clause}) }} | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+        )
+        try:
+            QProcess.execute("powershell.exe", ["-NoProfile", "-Command", ps])
+        except Exception as exc:
+            self._append_log(f"Backend cleanup failed: {exc}")
 
     def closeEvent(self, event) -> None:
         self._stop_backend()
@@ -413,7 +565,10 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
+    _apply_windows_app_id()
     app = QApplication(sys.argv)
+    if LOGO_PATH.exists():
+        app.setWindowIcon(QIcon(str(LOGO_PATH)))
     win = MainWindow()
     win.show()
     return app.exec()
@@ -421,3 +576,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+

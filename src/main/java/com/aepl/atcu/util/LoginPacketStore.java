@@ -65,4 +65,18 @@ public class LoginPacketStore {
             return new ArrayList<>();
         }
     }
+    public static LoginPacketInfo loadLatestForImei(String path, String imei) {
+        if (imei == null || imei.trim().isEmpty()) {
+            return null;
+        }
+        List<LoginPacketInfo> list = loadAll(path);
+        for (int i = list.size() - 1; i >= 0; i--) {
+            LoginPacketInfo info = list.get(i);
+            if (info != null && imei.equals(info.imei)) {
+                return info;
+            }
+        }
+        return null;
+    }
 }
+

@@ -112,7 +112,7 @@ public class FotaFileGenerator {
 	}
 
 	public static String writeLoginPacketInfoCsv(List<LoginPacketInfo> infos, String outputCsvPath) throws IOException {
-		String[] headers = { "UIN", "UFW", "MODEL", "IMEI", "STATE" };
+		String[] headers = { "UIN", "UFW", "MODEL", "STATE" , "IMEI"};
 		FileWriter out = new FileWriter(outputCsvPath);
 		CSVPrinter printer = new CSVPrinter(out, CSVFormat.DEFAULT.builder().setHeader(headers).build());
 		for (LoginPacketInfo info : infos) {
