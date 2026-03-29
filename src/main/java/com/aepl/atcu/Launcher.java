@@ -85,7 +85,6 @@ public class Launcher {
 			System.exit(1);
 		}
 	}
-
 	private static void setupDirectories() {
 		String[] dirs = { "input", "output", "logs", "results", "screenshots" };
 		for (String dir : dirs) {
@@ -136,3 +135,7 @@ public class Launcher {
 		}
 	}
 }
+
+
+
+

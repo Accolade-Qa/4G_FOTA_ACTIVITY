@@ -8,6 +8,7 @@ a = Analysis(
     datas=[
         ('ui\\backend', 'backend'),
         ('ui\\defaults', 'defaults'),
+        ('ui\\assets', 'assets'),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -25,6 +26,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='FOTA_UI',
+    icon='ui\\assets\\logo.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -45,6 +47,8 @@ coll = COLLECT(
     upx_exclude=[],
     name='FOTA_UI',
 )
+
+
 
 
 

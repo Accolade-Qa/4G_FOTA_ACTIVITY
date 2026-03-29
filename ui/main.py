@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import sys
+import uuid
 from pathlib import Path
 
 from PyQt6.QtCore import QProcess, Qt, QTimer
@@ -60,6 +61,18 @@ def _is_writable_dir(path: Path) -> bool:
 
 ASSETS_DIR = _resource_path("assets")
 LOGO_PATH = ASSETS_DIR / "logo.png"
+
+
+def _apply_windows_app_id() -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        app_id = "com.aepl.fota.automation.ui"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
 
 
 def read_properties(path: Path) -> dict:
@@ -126,6 +139,9 @@ class MainWindow(QMainWindow):
         self._apply_repo_root(self.repo_root)
 
         self.backend_process: QProcess | None = None
+        self.backend_pid: int | None = None
+        self.backend_jar_name: str | None = None
+        self.backend_marker: str | None = None
         self.build_process: QProcess | None = None
         self.stop_requested = False
 
@@ -315,6 +331,8 @@ class MainWindow(QMainWindow):
             return
 
         self.stop_requested = False
+        # Clean up any orphaned backend processes before starting a new one.
+        self._kill_all_backends_by_cmdline()
         self._save_config()
         self._append_log("servers.json generation will be handled by the Java backend.")
 
@@ -384,10 +402,14 @@ class MainWindow(QMainWindow):
 
     def _run_java(self, jar: Path) -> None:
         self.backend_process = QProcess(self)
+        self.backend_pid = None
+        self.backend_jar_name = jar.name
+        self.backend_marker = f"fota-ui-{uuid.uuid4()}"
         if _is_frozen():
             self.backend_process.setWorkingDirectory(str(self.data_dir))
         else:
             self.backend_process.setWorkingDirectory(str(self.repo_root))
+        self.backend_process.started.connect(self._on_backend_started)
         self.backend_process.readyReadStandardOutput.connect(
             lambda: self._append_process_output(self.backend_process)
         )
@@ -414,7 +436,12 @@ class MainWindow(QMainWindow):
             return
         self.backend_process.start(
             java_cmd,
-            [f"-Dfota.config={self.config_path}", "-jar", str(jar)],
+            [
+                f"-Dfota.config={self.config_path}",
+                f"-Dfota.ui.marker={self.backend_marker}",
+                "-jar",
+                str(jar),
+            ],
         )
 
     def _resolve_java_cmd(self) -> str | None:
@@ -440,11 +467,16 @@ class MainWindow(QMainWindow):
             self._stop_process(self.backend_process, "Backend")
             self.backend_process = None
             self._append_log("Backend stopped.")
+        else:
+            self._kill_all_backends_by_cmdline()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
 
     def _on_backend_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self.backend_process = None
+        self.backend_pid = None
+        self.backend_jar_name = None
+        self.backend_marker = None
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         if self.stop_requested:
@@ -474,6 +506,14 @@ class MainWindow(QMainWindow):
             return
         self.log.appendPlainText(text)
 
+    def _on_backend_started(self) -> None:
+        if self.backend_process is None:
+            return
+        pid = self.backend_process.processId()
+        if pid:
+            self.backend_pid = pid
+            self._append_log(f"Backend PID: {pid}")
+
     def _stop_process(self, proc: QProcess, label: str) -> None:
         proc.terminate()
         proc.waitForFinished(5000)
@@ -481,17 +521,43 @@ class MainWindow(QMainWindow):
             self._append_log(f"{label} did not stop on terminate; killing...")
             proc.kill()
             proc.waitForFinished(3000)
-        if proc.state() != QProcess.ProcessState.NotRunning:
-            pid = proc.processId()
-            if pid:
-                try:
-                    if sys.platform.startswith("win"):
-                        QProcess.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
-                    else:
-                        QProcess.execute("kill", ["-9", str(pid)])
-                    proc.waitForFinished(3000)
-                except Exception as exc:
-                    self._append_log(f"{label} force kill failed: {exc}")
+        pid = proc.processId()
+        if label == "Backend" and self.backend_pid:
+            pid = self.backend_pid
+        if proc.state() != QProcess.ProcessState.NotRunning and pid:
+            try:
+                if sys.platform.startswith("win"):
+                    QProcess.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
+                else:
+                    QProcess.execute("kill", ["-9", str(pid)])
+                proc.waitForFinished(3000)
+            except Exception as exc:
+                self._append_log(f"{label} force kill failed: {exc}")
+        if label == "Backend":
+            self._kill_all_backends_by_cmdline()
+
+    def _kill_all_backends_by_cmdline(self) -> None:
+        if not sys.platform.startswith("win"):
+            return
+        marker = self.backend_marker
+        jar_name = self.backend_jar_name
+        if not marker and not jar_name:
+            return
+        cond = []
+        if marker:
+            cond.append(f"$_.CommandLine -like '*{marker}*'")
+        if jar_name:
+            cond.append(f"$_.CommandLine -like '*{jar_name}*'")
+        where_clause = " -or ".join(cond)
+        ps = (
+            "Get-CimInstance Win32_Process | "
+            f"Where-Object {{ ($_.Name -eq 'java.exe' -or $_.Name -eq 'javaw.exe') -and ({where_clause}) }} | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+        )
+        try:
+            QProcess.execute("powershell.exe", ["-NoProfile", "-Command", ps])
+        except Exception as exc:
+            self._append_log(f"Backend cleanup failed: {exc}")
 
     def closeEvent(self, event) -> None:
         self._stop_backend()
@@ -499,7 +565,10 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
+    _apply_windows_app_id()
     app = QApplication(sys.argv)
+    if LOGO_PATH.exists():
+        app.setWindowIcon(QIcon(str(LOGO_PATH)))
     win = MainWindow()
     win.show()
     return app.exec()
@@ -507,3 +576,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
