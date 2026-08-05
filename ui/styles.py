@@ -1,0 +1,225 @@
+"""Clean & Professional Light Theme Stylesheet.
+
+Provides high-contrast, elegant light theme QSS styling for PyQt6 components.
+Uses explicit point size (pt) typography to prevent DPI font scaling warnings.
+"""
+
+LIGHT_THEME_QSS = """
+QMainWindow {
+    background-color: #f8fafc;
+}
+
+QWidget {
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    font-size: 9pt;
+    color: #1e293b;
+}
+
+/* Header & Telemetry Card Containers */
+QFrame.header-bar {
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px 14px;
+}
+
+QFrame.telemetry-bar {
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px 14px;
+}
+
+QLabel.app-title {
+    font-weight: 700;
+    font-size: 11pt;
+    color: #0f172a;
+    letter-spacing: 0.5px;
+}
+
+/* Telemetry Stats */
+QLabel.stat-label {
+    font-size: 8pt;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+QLabel.stat-value {
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: #2563eb;
+    border: none;
+    background-color: transparent;
+}
+
+/* Light Theme Buttons */
+QPushButton {
+    background-color: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 9pt;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: #e2e8f0;
+    color: #0f172a;
+}
+
+QPushButton.btn-primary {
+    background-color: #2563eb;
+    color: #ffffff;
+    border: none;
+}
+
+QPushButton.btn-primary:hover {
+    background-color: #1d4ed8;
+}
+
+QPushButton.btn-danger {
+    background-color: #dc2626;
+    color: #ffffff;
+    border: none;
+}
+
+QPushButton.btn-danger:hover {
+    background-color: #b91c1c;
+}
+
+QPushButton.btn-icon {
+    background-color: #ffffff;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 10pt;
+    font-weight: bold;
+}
+
+QPushButton.btn-icon:hover {
+    background-color: #f1f5f9;
+    color: #2563eb;
+    border-color: #2563eb;
+}
+
+QPushButton.btn-secondary {
+    background-color: #ffffff;
+    color: #64748b;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 8.5pt;
+    font-weight: 600;
+}
+
+QPushButton.btn-secondary:hover {
+    background-color: #f1f5f9;
+    color: #0f172a;
+    border-color: #94a3b8;
+}
+
+/* Status Badges */
+QLabel.status-online {
+    color: #16a34a;
+    font-weight: 700;
+    font-size: 9pt;
+}
+
+QLabel.status-offline {
+    color: #dc2626;
+    font-weight: 700;
+    font-size: 9pt;
+}
+
+/* Inputs & Combo Box */
+QComboBox, QLineEdit {
+    background-color: #ffffff;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 9pt;
+}
+
+QComboBox:hover, QLineEdit:hover {
+    border-color: #2563eb;
+}
+
+QComboBox:disabled, QLineEdit:disabled {
+    background-color: #f8fafc;
+    color: #94a3b8;
+    border-color: #e2e8f0;
+}
+
+/* Slim Light Progress Bar */
+QProgressBar {
+    background-color: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    height: 8px;
+    text-align: right;
+}
+
+QProgressBar::chunk {
+    background-color: #2563eb;
+    border-radius: 3px;
+}
+
+/* Light Monospace Terminal Console */
+QPlainTextEdit.light-console {
+    background-color: #ffffff;
+    color: #0f172a;
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 9.5pt;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 8px;
+}
+
+/* Toast / Snackbar Notification */
+QFrame.snackbar {
+    background-color: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px 14px;
+}
+
+QLabel.snackbar-text {
+    color: #f8fafc;
+    font-weight: 600;
+    font-size: 9pt;
+}
+
+QPushButton.snackbar-close {
+    background-color: transparent;
+    color: #94a3b8;
+    border: none;
+    font-weight: 700;
+    font-size: 11pt;
+    padding: 0px 4px;
+}
+
+QPushButton.snackbar-close:hover {
+    color: #ffffff;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    background: #f8fafc;
+    width: 8px;
+}
+
+QScrollBar::handle:vertical {
+    background: #cbd5e1;
+    border-radius: 4px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #94a3b8;
+}
+"""

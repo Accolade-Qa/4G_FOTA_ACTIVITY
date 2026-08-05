@@ -1,581 +1,550 @@
-import json
-import os
-import shutil
-import sys
-import uuid
-from pathlib import Path
+"""Minimalist Desktop UI Interface with Clean Polished Layout & Instant Launch.
 
-from PyQt6.QtCore import QProcess, Qt, QTimer
-from PyQt6.QtGui import QIcon
+Provides light theme styling, interactive serial AT command sending with Up/Down arrow history,
+smart auto-scroll, state selection dropdown, and automated CIP2 QA server verification and reboot handling.
+"""
+
+import json
+import sys
+import logging
+from pathlib import Path
+from typing import Optional, List
+
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
-    QFormLayout,
+    QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
-    QMessageBox,
-    QPushButton,
     QPlainTextEdit,
-    QFileDialog,
+    QProgressBar,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+# Add repo root to Python path
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-APP_TITLE = "FOTA Automation UI"
-LAST_REPO_PATH_FILE = Path.home() / ".fota_ui_repo_root"
-USER_DATA_DIR = Path.home() / ".fota_ui"
+from fota_engine.config import Config
+from fota_engine.models import LoginPacketInfo
+from fota_engine.orchestrator import FotaOrchestrator
+from fota_engine.serial_worker import SerialWorker
+from fota_engine.message_parser import MessageParser
+from ui.styles import LIGHT_THEME_QSS
 
-
-def _is_frozen() -> bool:
-    return getattr(sys, "frozen", False)
-
-
-def _app_base_dir() -> Path:
-    if _is_frozen():
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[1]
-
-
-def _resource_dir() -> Path:
-    if _is_frozen() and hasattr(sys, "_MEIPASS"):
-        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
-    return Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
 
 
-def _resource_path(rel_path: str) -> Path:
-    return _resource_dir() / rel_path
+class ApiSyncWorker(QThread):
+    """Background thread for non-blocking REST API state matrix synchronization on startup."""
+
+    sync_done_signal = pyqtSignal(bool, str)
+
+    def __init__(self, orchestrator: FotaOrchestrator, parent=None) -> None:
+        super().__init__(parent)
+        self.orchestrator = orchestrator
+
+    def run(self) -> None:
+        """Run API sync in background without freezing main UI thread."""
+        try:
+            ok = self.orchestrator.initialize_system()
+            msg = "API State Matrix Sync Complete." if ok else "Using cached state matrix."
+            self.sync_done_signal.emit(ok, msg)
+        except Exception as e:
+            logger.warning("Background API sync exception: %s", e)
+            self.sync_done_signal.emit(False, str(e))
 
 
-def _is_writable_dir(path: Path) -> bool:
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-        probe = path / ".write_test"
-        probe.write_text("", encoding="utf-8")
-        probe.unlink(missing_ok=True)
-        return True
-    except Exception:
-        return False
+class CommandHistoryLineEdit(QLineEdit):
+    """QLineEdit supporting command history navigation via Up and Down arrow keys."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.history: List[str] = []
+        self.history_idx: int = -1
+
+    def record_command(self, cmd: str) -> None:
+        """Add executed command string to history list."""
+        if cmd and (not self.history or self.history[-1] != cmd):
+            self.history.append(cmd)
+        self.history_idx = len(self.history)
+
+    def keyPressEvent(self, event) -> None:
+        """Navigate command history with Up and Down arrow keys."""
+        if event.key() == Qt.Key.Key_Up:
+            if self.history and self.history_idx > 0:
+                self.history_idx -= 1
+                self.setText(self.history[self.history_idx])
+            elif self.history and self.history_idx == -1:
+                self.history_idx = len(self.history) - 1
+                self.setText(self.history[self.history_idx])
+            event.accept()
+        elif event.key() == Qt.Key.Key_Down:
+            if self.history and self.history_idx < len(self.history) - 1:
+                self.history_idx += 1
+                self.setText(self.history[self.history_idx])
+            elif self.history_idx >= len(self.history) - 1:
+                self.history_idx = len(self.history)
+                self.clear()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 
-ASSETS_DIR = _resource_path("assets")
-LOGO_PATH = ASSETS_DIR / "logo.png"
+class InteractiveTerminalConsole(QPlainTextEdit):
+    """Interactive Monospace Console supporting instant Space/Enter scroll-to-bottom and Copy/Paste."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setProperty("class", "light-console")
+        self.setReadOnly(True)
+        self.setMaximumBlockCount(3000)
+
+    def keyPressEvent(self, event) -> None:
+        """Handle key events: Pressing Enter or Space scrolls instantly to the bottom of the log."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.moveCursor(QTextCursor.MoveOperation.End)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 
-def _apply_windows_app_id() -> None:
-    if not sys.platform.startswith("win"):
-        return
-    try:
-        import ctypes
+class SnackbarWidget(QFrame):
+    """Compact Floating Toast/Snackbar Notification Banner."""
 
-        app_id = "com.aepl.fota.automation.ui"
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
-    except Exception:
-        pass
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setProperty("class", "snackbar")
+        self.hide()
 
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.setSpacing(6)
 
-def read_properties(path: Path) -> dict:
-    data = {}
-    if not path.exists():
-        return data
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        data[key.strip()] = value.strip()
-    return data
+        self.lbl_text = QLabel("")
+        self.lbl_text.setStyleSheet("color: #f8fafc; font-weight: 600; font-size: 8.5pt;")
 
+        btn_close = QPushButton("✕")
+        btn_close.setProperty("class", "snackbar-close")
+        btn_close.setFixedWidth(16)
+        btn_close.clicked.connect(self.hide)
 
-def write_properties(path: Path, data: dict) -> None:
-    lines = [
-        "# Serial configuration",
-        f"serial.port={data.get('serial.port', '')}",
-        f"serial.baud={data.get('serial.baud', '115200')}",
-        "",
-        "# Input/output paths",
-        f"firmware.csv={data.get('firmware.csv', 'input/fota_batch.csv')}",
-        f"audit.csv={data.get('audit.csv', 'results/fota_audit.csv')}",
-        f"firmware.json={data.get('firmware.json', 'input/servers.json')}",
-        f"login.json={data.get('login.json', 'results/login_packets.json')}",
-        "",
-        "# Portal credentials and URL",
-        f"login.url={data.get('login.url', '')}",
-        f"login.user={data.get('login.user', '')}",
-        f"login.pass={data.get('login.pass', '')}",
-        "",
-        "# Device state (used as default if device reports 'Default')",
-        f"state={data.get('state', 'Default')}",
-        "",
-    ]
-    path.write_text("\n".join(lines), encoding="utf-8")
+        layout.addWidget(self.lbl_text)
+        layout.addWidget(btn_close)
+
+    def show_message(self, message: str, duration_ms: int = 3500) -> None:
+        """Display small snackbar message and auto-hide without freezing main UI."""
+        self.lbl_text.setText(message)
+        self.adjustSize()
+
+        if self.parent():
+            p_w = self.parent().width()
+            p_h = self.parent().height()
+            w = self.width()
+            h = self.height()
+            x = p_w - w - 20
+            y = p_h - h - 50
+            self.move(max(10, x), max(10, y))
+
+        self.show()
+        self.raise_()
+        QTimer.singleShot(duration_ms, self.hide)
 
 
-def find_jar(target_dir: Path) -> Path | None:
-    if not target_dir.exists():
-        return None
-    jars = list(target_dir.glob("*.jar"))
-    if not jars:
-        return None
-    preferred = [j for j in jars if "shaded" in j.name and "original" not in j.name]
-    if preferred:
-        return preferred[0]
-    filtered = [j for j in jars if "original" not in j.name]
-    return filtered[0] if filtered else None
+class MinimalFotaWindow(QMainWindow):
+    """Ultra-Minimalist Light Theme Window with Clean Layout & Automated Reboot/CIP2 QA Verification."""
 
-
-
-
-class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(APP_TITLE)
-        if LOGO_PATH.exists():
-            self.setWindowIcon(QIcon(str(LOGO_PATH)))
-        self.resize(980, 720)
+        self.setWindowTitle("Continuous FOTA Utility")
+        self.resize(1020, 650)
+        self.setStyleSheet(LIGHT_THEME_QSS)
 
-        self.repo_root = self._resolve_repo_root()
-        self._apply_repo_root(self.repo_root)
-
-        self.backend_process: QProcess | None = None
-        self.backend_pid: int | None = None
-        self.backend_jar_name: str | None = None
-        self.backend_marker: str | None = None
-        self.build_process: QProcess | None = None
-        self.stop_requested = False
+        self.config = Config(REPO_ROOT)
+        self.orchestrator = FotaOrchestrator(self.config)
+        self.serial_worker: Optional[SerialWorker] = None
+        self.api_sync_worker: Optional[ApiSyncWorker] = None
+        self._log_buffer = []
+        self._last_toast_key = None
 
         self._init_ui()
-        self._load_config()
-        QTimer.singleShot(0, self._start_backend)
+        self.snackbar = SnackbarWidget(self)
+        self._connect_signals()
+        self._populate_states_dropdown()
 
-    def _apply_repo_root(self, repo_root: Path) -> None:
-        self.repo_root = repo_root
-        if _is_frozen():
-            data_dir = _app_base_dir()
-            if not _is_writable_dir(data_dir):
-                data_dir = USER_DATA_DIR
-            self.data_dir = data_dir
-            self.config_path = data_dir / "config.properties"
-            self.input_dir = data_dir / "input"
-            self.results_dir = data_dir / "results"
-            self.logs_dir = data_dir / "logs"
-            self.output_dir = data_dir / "output"
-            self.screenshots_dir = data_dir / "screenshots"
-            for d in (
-                self.input_dir,
-                self.results_dir,
-                self.logs_dir,
-                self.output_dir,
-                self.screenshots_dir,
-            ):
-                d.mkdir(parents=True, exist_ok=True)
-            self.target_dir = _resource_path("backend")
-            self._seed_default_inputs()
-        else:
-            self.data_dir = repo_root
-            self.config_path = repo_root / "config.properties"
-            self.target_dir = repo_root / "target"
-            self.input_dir = repo_root / "input"
-            self.results_dir = repo_root / "results"
-            self.logs_dir = repo_root / "logs"
-            self.output_dir = repo_root / "output"
-            self.screenshots_dir = repo_root / "screenshots"
-        self.server_inputs_xlsx = self.input_dir / "Server_Inputs.xlsx"
+        # Flush buffered log lines every 50ms (prevents UI rendering lag)
+        self.timer_flush = QTimer(self)
+        self.timer_flush.timeout.connect(self._flush_log_buffer)
+        self.timer_flush.start(50)
 
-    def _is_repo_root(self, path: Path) -> bool:
-        if not path.exists() or not path.is_dir():
-            return False
-        # Require pom.xml to avoid mistaking the PyInstaller dist folder for repo root.
-        return (path / "pom.xml").exists()
-
-    def _resolve_repo_root(self) -> Path:
-        if _is_frozen():
-            # Standalone mode: use the app directory as root (backend JAR and runtime live here).
-            return _app_base_dir()
-        candidates: list[Path] = []
-        if LAST_REPO_PATH_FILE.exists():
-            try:
-                saved = Path(LAST_REPO_PATH_FILE.read_text(encoding="utf-8").strip())
-                if saved:
-                    candidates.append(saved)
-            except Exception:
-                pass
-        candidates.append(Path(__file__).resolve().parents[1])
-        candidates.append(Path.cwd())
-
-        for candidate in candidates:
-            if self._is_repo_root(candidate):
-                return candidate
-
-        chosen = QFileDialog.getExistingDirectory(None, "Select FOTA repo folder", str(Path.cwd()))
-        if chosen:
-            chosen_path = Path(chosen)
-            if self._is_repo_root(chosen_path):
-                try:
-                    LAST_REPO_PATH_FILE.write_text(str(chosen_path), encoding="utf-8")
-                except Exception:
-                    pass
-                return chosen_path
-
-        QMessageBox.warning(
-            None,
-            APP_TITLE,
-            "Could not locate the repo root. Please select the folder that contains pom.xml.",
-        )
-
-        return Path(__file__).resolve().parents[1]
-
-    def _seed_default_inputs(self) -> None:
-        # Copy bundled defaults into user data dir if missing.
-        defaults_dir = _resource_path("defaults")
-        if not defaults_dir.exists():
-            return
-        for item in defaults_dir.iterdir():
-            if not item.is_file():
-                continue
-            dest = self.input_dir / item.name
-            if not dest.exists():
-                try:
-                    shutil.copy2(item, dest)
-                except Exception:
-                    pass
+        # Launch API Matrix Sync asynchronously in background thread
+        self.api_sync_worker = ApiSyncWorker(self.orchestrator, self)
+        self.api_sync_worker.sync_done_signal.connect(self._on_api_sync_complete)
+        self.api_sync_worker.start()
 
     def _init_ui(self) -> None:
-        root = QWidget()
-        layout = QVBoxLayout(root)
-
-        form = QFormLayout()
-
-        self.firmware_json_value = "input/servers.json"
-        self.firmware_csv_value = "input/fota_batch.csv"
-        self.audit_csv_value = "results/fota_audit.csv"
-        self.login_json_value = "results/login_packets.json"
-
-        self.portal_url = QLineEdit()
-        form.addRow("Portal URL", self.portal_url)
-
-        self.portal_user = QLineEdit()
-        form.addRow("Portal User", self.portal_user)
-
-        self.portal_pass = QLineEdit()
-        self.portal_pass.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Portal Pass", self.portal_pass)
-
-        self.default_state = QLineEdit()
-        form.addRow("Default State", self.default_state)
-
-        layout.addLayout(form)
-
-        button_row = QHBoxLayout()
-        self.save_btn = QPushButton("Save Config")
-        self.save_btn.clicked.connect(self._save_config)
-        self.start_btn = QPushButton("Start Backend")
-        self.start_btn.clicked.connect(self._start_backend)
-        self.stop_btn = QPushButton("Stop Backend")
-        self.stop_btn.clicked.connect(self._stop_backend)
-        self.stop_btn.setEnabled(False)
-
-        button_row.addWidget(self.save_btn)
-        button_row.addWidget(self.start_btn)
-        button_row.addWidget(self.stop_btn)
-        button_row.addStretch(1)
-        layout.addLayout(button_row)
-
-        layout.addWidget(QLabel("Backend Log"))
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        layout.addWidget(self.log, stretch=1)
-
+        """Build clean light interface layout."""
+        root = QWidget(self)
         self.setCentralWidget(root)
-        if hasattr(self, "data_dir"):
-            self._append_log(f"Data directory: {self.data_dir}")
 
-    def _load_config(self) -> None:
-        props = read_properties(self.config_path)
-        def _get(key: str, default: str) -> str:
-            value = props.get(key, "").strip()
-            return value if value else default
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
 
-        self.firmware_json_value = _get("firmware.json", "input/servers.json")
-        self.firmware_csv_value = _get("firmware.csv", "input/fota_batch.csv")
-        self.audit_csv_value = _get("audit.csv", "results/fota_audit.csv")
-        self.login_json_value = _get("login.json", "results/login_packets.json")
-        self.portal_url.setText(props.get("login.url", ""))
-        self.portal_user.setText(props.get("login.user", ""))
-        self.portal_pass.setText(props.get("login.pass", ""))
-        self.default_state.setText(_get("state", "Default"))
+        # 1. Compact Light Header Bar
+        hdr = QFrame()
+        hdr.setProperty("class", "header-bar")
+        hdr_box = QHBoxLayout(hdr)
+        hdr_box.setContentsMargins(10, 6, 10, 6)
+        hdr_box.setSpacing(10)
 
-    def _collect_config(self) -> dict:
-        return {
-            "firmware.csv": self.firmware_csv_value,
-            "audit.csv": self.audit_csv_value,
-            "firmware.json": self.firmware_json_value,
-            "login.json": self.login_json_value,
-            "login.url": self.portal_url.text().strip(),
-            "login.user": self.portal_user.text().strip(),
-            "login.pass": self.portal_pass.text().strip(),
-            "state": self.default_state.text().strip(),
-        }
+        title = QLabel("FOTA UTILITY")
+        title.setProperty("class", "app-title")
 
-    def _save_config(self) -> None:
-        write_properties(self.config_path, self._collect_config())
-        self._append_log(f"Saved config to {self.config_path}")
+        self.lbl_status = QLabel("● OFFLINE")
+        self.lbl_status.setProperty("class", "status-offline")
 
-    def _start_backend(self) -> None:
-        if self.backend_process and self.backend_process.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, APP_TITLE, "Backend is already running.")
-            return
-        if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, APP_TITLE, "Build is already running.")
-            return
+        self.combo_states = QComboBox()
+        self.combo_states.setMinimumWidth(140)
+        self.combo_states.currentTextChanged.connect(self._on_state_selected)
 
-        self.stop_requested = False
-        # Clean up any orphaned backend processes before starting a new one.
-        self._kill_all_backends_by_cmdline()
-        self._save_config()
-        self._append_log("servers.json generation will be handled by the Java backend.")
+        self.combo_ports = QComboBox()
+        self.combo_ports.setMinimumWidth(100)
+        self._refresh_ports()
 
-        jar = find_jar(self.target_dir)
-        if not jar:
-            self._append_log("No JAR found in target/. Running Maven package...")
-            self._run_maven_build()
-            return
+        self.btn_refresh = QPushButton("↻")
+        self.btn_refresh.setProperty("class", "btn-icon")
+        self.btn_refresh.setFixedWidth(32)
+        self.btn_refresh.setToolTip("Refresh COM ports")
+        self.btn_refresh.clicked.connect(self._refresh_ports)
 
-        self._run_java(jar)
+        self.btn_toggle = QPushButton("Start Engine")
+        self.btn_toggle.setProperty("class", "btn-primary")
+        self.btn_toggle.clicked.connect(self._toggle_engine)
 
-    def _run_maven_build(self) -> None:
-        if _is_frozen():
-            self._append_log("Build is not available in standalone mode.")
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
-            return
-        if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
-            return
-        mvn = shutil.which("mvn") or shutil.which("mvn.cmd")
-        if not mvn:
-            self._append_log("Maven not found on PATH. Please install Maven or add it to PATH.")
-            QMessageBox.warning(
-                self,
-                APP_TITLE,
-                "Maven not found on PATH. Please install Maven or add it to PATH.",
-            )
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
-            return
-        self.build_process = QProcess(self)
-        self.build_process.setWorkingDirectory(str(self.repo_root))
-        self.build_process.readyReadStandardOutput.connect(
-            lambda: self._append_process_output(self.build_process)
-        )
-        self.build_process.readyReadStandardError.connect(
-            lambda: self._append_process_output(self.build_process)
-        )
-        self.build_process.finished.connect(self._on_build_finished)
-        self.build_process.errorOccurred.connect(
-            lambda err: self._on_process_error("Build", err)
-        )
-        self._append_log("Running Maven build: mvn -q -DskipTests package")
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(False)
-        self.build_process.start(mvn, ["-q", "-DskipTests", "package"])
+        hdr_box.addWidget(title)
+        hdr_box.addWidget(self.lbl_status)
+        hdr_box.addStretch()
+        hdr_box.addWidget(QLabel("Target State:"))
+        hdr_box.addWidget(self.combo_states)
+        hdr_box.addWidget(QLabel("Port:"))
+        hdr_box.addWidget(self.combo_ports)
+        hdr_box.addWidget(self.btn_refresh)
+        hdr_box.addWidget(self.btn_toggle)
 
-    def _on_build_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        self.build_process = None
-        if self.stop_requested:
-            self._append_log("Build stopped.")
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
-            return
-        if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
-            self._append_log(f"Build failed (exit code {exit_code}).")
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
-            return
-        jar = find_jar(self.target_dir)
-        if not jar:
-            self._append_log("Build finished but no JAR was found in target/.")
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
-            return
-        self._run_java(jar)
+        layout.addWidget(hdr)
 
-    def _run_java(self, jar: Path) -> None:
-        self.backend_process = QProcess(self)
-        self.backend_pid = None
-        self.backend_jar_name = jar.name
-        self.backend_marker = f"fota-ui-{uuid.uuid4()}"
-        if _is_frozen():
-            self.backend_process.setWorkingDirectory(str(self.data_dir))
-        else:
-            self.backend_process.setWorkingDirectory(str(self.repo_root))
-        self.backend_process.started.connect(self._on_backend_started)
-        self.backend_process.readyReadStandardOutput.connect(
-            lambda: self._append_process_output(self.backend_process)
-        )
-        self.backend_process.readyReadStandardError.connect(
-            lambda: self._append_process_output(self.backend_process)
-        )
-        self.backend_process.finished.connect(self._on_backend_finished)
-        self.backend_process.errorOccurred.connect(
-            lambda err: self._on_process_error("Backend", err)
-        )
-        self._append_log(f"Starting backend: {jar.name}")
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        java_cmd = self._resolve_java_cmd()
-        if not java_cmd:
-            self._append_log("Java runtime not found. Please install Java 21+ or bundle a runtime.")
-            QMessageBox.warning(
-                self,
-                APP_TITLE,
-                "Java runtime not found. Please install Java 21+ or bundle a runtime.",
-            )
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
-            return
-        self.backend_process.start(
-            java_cmd,
-            [
-                f"-Dfota.config={self.config_path}",
-                f"-Dfota.ui.marker={self.backend_marker}",
-                "-jar",
-                str(jar),
-            ],
-        )
+        # 2. Captured Telemetry Bar (IMEI, UIN, VIN, ICCID, State, Firmware + Clear Info Button)
+        tel_bar = QFrame()
+        tel_bar.setProperty("class", "telemetry-bar")
+        tel_box = QHBoxLayout(tel_bar)
+        tel_box.setContentsMargins(10, 6, 10, 6)
+        tel_box.setSpacing(14)
 
-    def _resolve_java_cmd(self) -> str | None:
-        # Prefer bundled runtime in standalone mode.
-        if _is_frozen():
-            runtime_java = _resource_path("runtime") / "bin" / "java.exe"
-            if runtime_java.exists():
-                return str(runtime_java)
-        return shutil.which("java")
+        self.lbl_imei = self._add_stat(tel_box, "IMEI", "---------------")
+        self.lbl_uin = self._add_stat(tel_box, "UIN", "ACON--------")
+        self.lbl_vin = self._add_stat(tel_box, "VIN", "MAT--------------")
+        self.lbl_iccid = self._add_stat(tel_box, "ICCID", "--------------------")
+        self.lbl_state = self._add_stat(tel_box, "CURRENT STATE", "DO NOT DELETE")
+        self.lbl_ver = self._add_stat(tel_box, "FIRMWARE", "1.0.0 → Waiting")
 
-    def _resolve_path(self, value: str) -> Path:
-        if not value:
-            return self.repo_root
-        path = Path(value)
-        return path if path.is_absolute() else (self.repo_root / path)
+        btn_clear_info = QPushButton("Clear Info")
+        btn_clear_info.setProperty("class", "btn-secondary")
+        btn_clear_info.setFixedWidth(85)
+        btn_clear_info.setToolTip("Clear captured device telemetry")
+        btn_clear_info.clicked.connect(self._clear_device_telemetry)
+        tel_box.addWidget(btn_clear_info, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-    def _stop_backend(self) -> None:
-        self.stop_requested = True
-        if self.build_process and self.build_process.state() != QProcess.ProcessState.NotRunning:
-            self._stop_process(self.build_process, "Build")
-            self.build_process = None
-        if self.backend_process and self.backend_process.state() != QProcess.ProcessState.NotRunning:
-            self._stop_process(self.backend_process, "Backend")
-            self.backend_process = None
-            self._append_log("Backend stopped.")
-        else:
-            self._kill_all_backends_by_cmdline()
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        layout.addWidget(tel_bar)
 
-    def _on_backend_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        self.backend_process = None
-        self.backend_pid = None
-        self.backend_jar_name = None
-        self.backend_marker = None
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        if self.stop_requested:
-            return
-        if exit_status == QProcess.ExitStatus.NormalExit:
-            self._append_log(f"Backend exited (code {exit_code}).")
-        else:
-            self._append_log("Backend crashed.")
+        # 3. Status Line (Clean, padded message banner)
+        self.lbl_msg = QLabel("Ready.")
+        self.lbl_msg.setStyleSheet("color: #2563eb; font-size: 9pt; font-weight: 500; padding: 2px 4px;")
+        self.lbl_msg.setWordWrap(True)
+        layout.addWidget(self.lbl_msg)
 
-    def _append_process_output(self, proc: QProcess | None) -> None:
-        if proc is None:
-            return
-        data = proc.readAllStandardOutput().data().decode(errors="ignore")
-        err = proc.readAllStandardError().data().decode(errors="ignore")
-        if data:
-            self._append_log(data.rstrip())
-        if err:
-            self._append_log(err.rstrip())
+        # 4. Interactive Log Terminal Console
+        self.console = InteractiveTerminalConsole()
+        layout.addWidget(self.console, stretch=1)
 
-    def _on_process_error(self, label: str, err: QProcess.ProcessError) -> None:
-        self._append_log(f"{label} process error: {err.name}")
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        # 5. Command Input Bar (Send Serial AT Commands with Up/Down Arrow History)
+        cmd_box = QHBoxLayout()
+        self.input_cmd = CommandHistoryLineEdit()
+        self.input_cmd.setPlaceholderText("Type serial/AT command and press Enter (e.g. *SET#CRST#1#)... Use Up/Down arrow for history.")
+        self.input_cmd.returnPressed.connect(self._on_send_command)
 
-    def _append_log(self, text: str) -> None:
-        if not text:
-            return
-        self.log.appendPlainText(text)
+        self.btn_send_cmd = QPushButton("Send Command")
+        self.btn_send_cmd.setFixedWidth(120)
+        self.btn_send_cmd.clicked.connect(self._on_send_command)
 
-    def _on_backend_started(self) -> None:
-        if self.backend_process is None:
-            return
-        pid = self.backend_process.processId()
-        if pid:
-            self.backend_pid = pid
-            self._append_log(f"Backend PID: {pid}")
+        cmd_box.addWidget(self.input_cmd, stretch=1)
+        cmd_box.addWidget(self.btn_send_cmd)
 
-    def _stop_process(self, proc: QProcess, label: str) -> None:
-        proc.terminate()
-        proc.waitForFinished(5000)
-        if proc.state() != QProcess.ProcessState.NotRunning:
-            self._append_log(f"{label} did not stop on terminate; killing...")
-            proc.kill()
-            proc.waitForFinished(3000)
-        pid = proc.processId()
-        if label == "Backend" and self.backend_pid:
-            pid = self.backend_pid
-        if proc.state() != QProcess.ProcessState.NotRunning and pid:
+        layout.addLayout(cmd_box)
+
+    def _add_stat(self, box: QHBoxLayout, label: str, default: str) -> QLabel:
+        """Helper for adding compact inline telemetry stats."""
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        lbl_t = QLabel(label)
+        lbl_t.setProperty("class", "stat-label")
+        lbl_v = QLabel(default)
+        lbl_v.setProperty("class", "stat-value")
+        col.addWidget(lbl_t)
+        col.addWidget(lbl_v)
+        box.addLayout(col)
+        return lbl_v
+
+    def _connect_signals(self) -> None:
+        """Connect orchestrator signals."""
+        self.orchestrator.status_signal.connect(self.lbl_msg.setText)
+        self.orchestrator.device_info_signal.connect(self._on_device_info)
+        self.orchestrator.progress_signal.connect(self._on_progress_update)
+        self.orchestrator.request_command_signal.connect(self._auto_execute_command)
+
+    @pyqtSlot(float)
+    def _on_progress_update(self, val: float) -> None:
+        """Handle download progress update."""
+        self.lbl_msg.setText(f"FOTA Downloading: {val:.1f}%")
+
+    @pyqtSlot(bool, str)
+    def _on_api_sync_complete(self, ok: bool, msg: str) -> None:
+        """Callback when background API matrix sync completes."""
+        self._populate_states_dropdown()
+        logger.info("Background API sync completed: %s", msg)
+
+    def _populate_states_dropdown(self) -> None:
+        """Populate State Selector Dropdown dynamically from input/servers.json (API response)."""
+        self.combo_states.blockSignals(True)
+        self.combo_states.clear()
+        
+        states = ["DO NOT DELETE"]
+        target_path = self.config.firmware_json_path
+        if target_path.exists():
             try:
-                if sys.platform.startswith("win"):
-                    QProcess.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
-                else:
-                    QProcess.execute("kill", ["-9", str(pid)])
-                proc.waitForFinished(3000)
-            except Exception as exc:
-                self._append_log(f"{label} force kill failed: {exc}")
-        if label == "Backend":
-            self._kill_all_backends_by_cmdline()
+                from fota_engine.message_parser import MessageParser
+                MessageParser.load_valid_states_from_json(target_path)
+                with open(target_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    st_dict = data.get("states", {})
+                    for s in st_dict.keys():
+                        if s not in states and s.lower() != "default":
+                            states.append(s)
+            except Exception as e:
+                logger.warning("Error reading state names for dropdown: %s", e)
 
-    def _kill_all_backends_by_cmdline(self) -> None:
-        if not sys.platform.startswith("win"):
+        self.combo_states.addItems(states)
+        self.combo_states.setCurrentText("DO NOT DELETE")
+        self.combo_states.blockSignals(False)
+
+    @pyqtSlot(str)
+    def _on_state_selected(self, state_name: str) -> None:
+        """Handle state selection change from state dropdown and re-evaluate version validation."""
+        if not state_name:
             return
-        marker = self.backend_marker
-        jar_name = self.backend_jar_name
-        if not marker and not jar_name:
+        self.lbl_state.setText(state_name)
+        if self.orchestrator and self.orchestrator.current_device:
+            self.orchestrator.current_device.state = state_name
+            self.orchestrator.attempted_uins.discard(self.orchestrator.current_device.uin)
+            self.orchestrator.process_login_packet(self.orchestrator.current_device)
+
+    def _refresh_ports(self) -> None:
+        """Refresh COM ports dropdown."""
+        self.combo_ports.clear()
+        ports = SerialWorker.list_available_ports()
+        if ports:
+            self.combo_ports.addItems(ports)
+        else:
+            self.combo_ports.addItem("No Ports")
+
+    @pyqtSlot()
+    def _toggle_engine(self) -> None:
+        """Start or stop serial engine and lock/unlock port selection controls."""
+        if self.serial_worker and self.serial_worker.isRunning():
+            self._stop_engine()
+        else:
+            self._start_engine()
+
+    def _start_engine(self) -> None:
+        """Start serial engine, lock port selection, and auto-fire reboot command (*SET#CRST#1#)."""
+        port = self.combo_ports.currentText()
+        if port == "No Ports":
+            port = ""
+        
+        self.serial_worker = SerialWorker(port_name=port, baud_rate=self.config.serial_baud)
+        self.serial_worker.raw_log_signal.connect(self._queue_log_line)
+        self.serial_worker.progress_signal.connect(self.orchestrator.update_progress)
+        self.serial_worker.login_packet_signal.connect(self.orchestrator.process_login_packet)
+        self.serial_worker.port_status_signal.connect(self._on_port_status)
+        self.serial_worker.start()
+
+        self.combo_ports.setEnabled(False)
+        self.btn_refresh.setEnabled(False)
+
+        self.lbl_status.setText("● ONLINE")
+        self.lbl_status.setProperty("class", "status-online")
+        self.btn_toggle.setText("Stop Engine")
+        self.btn_toggle.setProperty("class", "btn-danger")
+
+        self.lbl_status.setStyle(self.lbl_status.style())
+        self.btn_toggle.setStyle(self.btn_toggle.style())
+
+        # Auto-fire reboot command *SET#CRST#1# upon engine connection
+        QTimer.singleShot(600, lambda: self._auto_execute_command("*SET#CRST#1#"))
+
+    def _stop_engine(self) -> None:
+        """Stop serial engine and unlock port selection."""
+        if self.serial_worker:
+            self.serial_worker.stop()
+            self.serial_worker = None
+
+        self.combo_ports.setEnabled(True)
+        self.btn_refresh.setEnabled(True)
+
+        self.lbl_status.setText("● OFFLINE")
+        self.lbl_status.setProperty("class", "status-offline")
+        self.btn_toggle.setText("Start Engine")
+        self.btn_toggle.setProperty("class", "btn-primary")
+
+        self.lbl_status.setStyle(self.lbl_status.style())
+        self.btn_toggle.setStyle(self.btn_toggle.style())
+
+    @pyqtSlot(str)
+    def _auto_execute_command(self, cmd: str) -> None:
+        """Automated serial AT command execution."""
+        if not cmd:
             return
-        cond = []
-        if marker:
-            cond.append(f"$_.CommandLine -like '*{marker}*'")
-        if jar_name:
-            cond.append(f"$_.CommandLine -like '*{jar_name}*'")
-        where_clause = " -or ".join(cond)
-        ps = (
-            "Get-CimInstance Win32_Process | "
-            f"Where-Object {{ ($_.Name -eq 'java.exe' -or $_.Name -eq 'javaw.exe') -and ({where_clause}) }} | "
-            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
-        )
-        try:
-            QProcess.execute("powershell.exe", ["-NoProfile", "-Command", ps])
-        except Exception as exc:
-            self._append_log(f"Backend cleanup failed: {exc}")
+        if self.serial_worker and self.serial_worker.isRunning():
+            success = self.serial_worker.send_command(cmd)
+            if success:
+                self.console.appendPlainText(f"[TX AUTO] > {cmd}")
+                sb = self.console.verticalScrollBar()
+                sb.setValue(sb.maximum())
+                logger.info("Auto-executed serial command: %s", cmd)
+
+    @pyqtSlot()
+    def _on_send_command(self) -> None:
+        """Send serial command typed in command input bar to device."""
+        cmd = self.input_cmd.text().strip()
+        if not cmd:
+            return
+
+        self.input_cmd.record_command(cmd)
+
+        if self.serial_worker and self.serial_worker.isRunning():
+            success = self.serial_worker.send_command(cmd)
+            if success:
+                self.console.appendPlainText(f"[TX] > {cmd}")
+                sb = self.console.verticalScrollBar()
+                sb.setValue(sb.maximum())
+                self.input_cmd.clear()
+            else:
+                self.lbl_msg.setText(f"Failed to send command: {cmd}")
+        else:
+            self.lbl_msg.setText("Cannot send command: Engine is OFFLINE.")
+
+    @pyqtSlot()
+    def _clear_device_telemetry(self) -> None:
+        """Reset all captured device telemetry fields back to defaults."""
+        self.lbl_imei.setText("---------------")
+        self.lbl_uin.setText("ACON--------")
+        self.lbl_vin.setText("MAT--------------")
+        self.lbl_iccid.setText("--------------------")
+        self.lbl_state.setText(self.combo_states.currentText())
+        self.lbl_ver.setText("1.0.0 → Waiting")
+        self._last_toast_key = None
+        
+        if self.orchestrator:
+            self.orchestrator.reset_orchestrator()
+        if self.serial_worker:
+            self.serial_worker.reset_login_capture()
+        self.lbl_msg.setText("Cleared captured device telemetry.")
+
+    @pyqtSlot(bool, str)
+    def _on_port_status(self, connected: bool, msg: str) -> None:
+        """Handle serial connection and physical disconnect events."""
+        self.lbl_msg.setText(msg)
+        if not connected:
+            self._stop_engine()
+
+    @pyqtSlot(object)
+    def _on_device_info(self, info: LoginPacketInfo) -> None:
+        """Display captured telemetry and trigger freeze-free Snackbar Alert."""
+        self.lbl_imei.setText(info.imei or "---------------")
+        self.lbl_uin.setText(info.uin or "ACON--------")
+        self.lbl_vin.setText(info.vin or "MAT--------------")
+        self.lbl_iccid.setText(info.iccid or "--------------------")
+
+        curr_state = info.state if (info.state and info.state not in ("DO NOT DELETE", "is Factory", "connected")) else self.combo_states.currentText()
+        self.lbl_state.setText(curr_state)
+        
+        target = self.orchestrator.target_version or "Latest"
+        self.lbl_ver.setText(f"{info.version} → {target}")
+
+        # Trigger Snackbar ONLY ONCE when a new UIN is detected (prevents UI freeze)
+        toast_key = (info.uin, info.imei)
+        if info.uin and toast_key != self._last_toast_key:
+            self._last_toast_key = toast_key
+            toast_text = f"⚡ Device Detected: UIN {info.uin} | IMEI {info.imei}"
+            self.snackbar.show_message(toast_text, duration_ms=3000)
+
+    def _queue_log_line(self, line: str) -> None:
+        """Queue incoming serial line for batch flushing and inspect for CIP2 server verification."""
+        self._log_buffer.append(line)
+        if self.orchestrator:
+            self.orchestrator.process_log_line(line)
+
+    def _flush_log_buffer(self) -> None:
+        """Flush queued log lines without moving viewport when user is scrolled up inspecting past logs."""
+        if self._log_buffer:
+            sb = self.console.verticalScrollBar()
+            prev_val = sb.value()
+            max_val = sb.maximum()
+
+            at_bottom = prev_val >= (max_val - 25)
+
+            lines = "\n".join(self._log_buffer)
+            self._log_buffer.clear()
+
+            self.console.appendPlainText(lines)
+
+            if at_bottom:
+                sb.setValue(sb.maximum())
+            else:
+                sb.setValue(prev_val)
+
+    def resizeEvent(self, event) -> None:
+        """Reposition floating snackbar on window resize."""
+        super().resizeEvent(event)
+        if hasattr(self, "snackbar") and self.snackbar.isVisible():
+            p_w = self.width()
+            p_h = self.height()
+            w = self.snackbar.width()
+            h = self.snackbar.height()
+            self.snackbar.move(max(10, p_w - w - 20), max(10, p_h - h - 50))
 
     def closeEvent(self, event) -> None:
-        self._stop_backend()
+        if self.serial_worker:
+            self.serial_worker.stop()
+        if self.api_sync_worker and self.api_sync_worker.isRunning():
+            self.api_sync_worker.quit()
         event.accept()
 
 
-def main() -> int:
-    _apply_windows_app_id()
+def main() -> None:
     app = QApplication(sys.argv)
-    if LOGO_PATH.exists():
-        app.setWindowIcon(QIcon(str(LOGO_PATH)))
-    win = MainWindow()
+    app.setFont(QFont("Segoe UI", 9))
+    win = MinimalFotaWindow()
     win.show()
-    return app.exec()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
-
-
-
+    main()
