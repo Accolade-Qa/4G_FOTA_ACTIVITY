@@ -7,7 +7,7 @@ Keeps the architecture modular and open for custom expansion.
 
 import logging
 from typing import Callable, List, Dict, Any
-from fota_engine.models import LoginPacketInfo
+from backend.models import LoginPacketInfo
 
 logger = logging.getLogger(__name__)
 

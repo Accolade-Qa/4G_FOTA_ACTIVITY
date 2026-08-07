@@ -18,12 +18,12 @@ from typing import Optional, List, Set
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from fota_engine.config import Config
-from fota_engine.api_client import FotaApiClient
-from fota_engine.firmware_resolver import FirmwareResolver
-from fota_engine.message_parser import MessageParser
-from fota_engine.models import LoginPacketInfo, FotaAuditRecord, FotaTriggerPayload
-from fota_engine.extensions import ExtensionManager
+from backend.config import Config
+from backend.api_client import FotaApiClient
+from backend.firmware_resolver import FirmwareResolver
+from backend.message_parser import MessageParser
+from backend.models import LoginPacketInfo, FotaAuditRecord, FotaTriggerPayload
+from backend.extensions import ExtensionManager
 
 logger = logging.getLogger(__name__)
 

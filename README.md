@@ -16,7 +16,7 @@ It automates continuous Firmware Over-The-Air (FOTA) testing and upgrading by re
 ---
 
 ## 📂 Directory Layout
-- `fota_engine/`: Core Python engine modules
+- `backend/`: Core Python engine modules
   - `api_client.py`: API matrix synchronization & REST POST FOTA triggers
   - `config.py`: Environment configuration loader (`.env`)
   - `extensions.py`: Modular plugin hooks for custom feature additions

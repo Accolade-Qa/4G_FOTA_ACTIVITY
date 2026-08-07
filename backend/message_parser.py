@@ -2,7 +2,7 @@
 
 Parses incoming text lines from device serial logs to extract login telemetry,
 download progress, software version updates, and CIP2 QA server configuration.
-Supports regex parsing for 'aeplFwVer' and 'SOFTWARE :' version banner formats.
+Extracts full firmware version terms (e.g. '5.2.9 5th IP') exclusively from 'aeplFwVer' and 'SOFTWARE :' formats.
 """
 
 import json
@@ -10,7 +10,7 @@ import re
 import logging
 from pathlib import Path
 from typing import Optional, Tuple, List, Set
-from fota_engine.models import LoginPacketInfo
+from backend.models import LoginPacketInfo
 
 logger = logging.getLogger(__name__)
 
@@ -118,25 +118,22 @@ class MessageParser:
 
     @classmethod
     def parse_firmware_version(cls, line: str) -> Optional[str]:
-        """Extract firmware version string from log lines (supports 'aeplFwVer', 'SOFTWARE :', 'UFW', etc.)."""
+        """Extract full firmware version string (e.g. '5.2.9 5th IP') exclusively from 'aeplFwVer' or 'SOFTWARE :' log formats."""
         clean_line = cls.strip_ansi(line)
         if not clean_line:
             return None
 
         # 1. Match 'aeplFwVer    5.2.9 5th IP'
-        m1 = re.search(r"aeplFwVer[:=,\s]+([0-9]+\.[0-9]+(?:\.[0-9]+)*)", clean_line, re.IGNORECASE)
+        m1 = re.search(r"aeplFwVer[:=,\s]+([^#\r\n]+)", clean_line, re.IGNORECASE)
         if m1:
-            return m1.group(1).strip()
+            val = m1.group(1).strip().rstrip("#").strip()
+            if val and val.lower() not in ("succ", "ok", "idle"):
+                return val
 
         # 2. Match '######## SOFTWARE : 5.2.9 5th IP           ########'
-        m2 = re.search(r"SOFTWARE[\s:=#]+([0-9]+\.[0-9]+(?:\.[0-9]+)*)", clean_line, re.IGNORECASE)
+        m2 = re.search(r"SOFTWARE[:=,\s]+([^#\r\n]+)", clean_line, re.IGNORECASE)
         if m2:
-            return m2.group(1).strip()
-
-        # 3. Standard UFW / VER / FIRMWARE / FW
-        m3 = re.search(r"(?:VER|VERSION|UFW|FIRMWARE|FW)[:=,\s]+([A-Za-z0-9._-]+)", clean_line, re.IGNORECASE)
-        if m3:
-            val = m3.group(1).strip()
+            val = m2.group(1).strip().rstrip("#").strip()
             if val and val.lower() not in ("succ", "ok", "idle", "falcon", "atcu"):
                 return val
 
@@ -168,7 +165,7 @@ class MessageParser:
             vin = next((p.upper() for p in parts if cls.is_valid_vin(p)), None)
 
         if uin or imei or vin or ver_val:
-            version = ver_val or "1.0.0"
+            version = ver_val or ""
             state = "DO NOT DELETE"
             if state_match and cls.is_valid_state_name(state_match.group(1)):
                 state = state_match.group(1).strip()
@@ -177,9 +174,7 @@ class MessageParser:
             model = model_match.group(1) if model_match else "4G"
 
             for p in parts:
-                if not ver_val and (re.match(r"^\d+\.\d+\.\d+$", p) or p.isdigit()):
-                    version = p
-                elif not iccid_match and len(p) in (18, 19, 20) and p.isdigit():
+                if not iccid_match and len(p) in (18, 19, 20) and p.isdigit():
                     iccid = p
                 elif cls.is_valid_state_name(p):
                     state = p
@@ -275,7 +270,7 @@ class TelemetryAccumulator:
                 self.state = s_val
                 updated = True
 
-        # 6. Extract VERSION / UFW / aeplFwVer / SOFTWARE
+        # 6. Extract VERSION exclusively from aeplFwVer and SOFTWARE : formats
         v_val = MessageParser.parse_firmware_version(clean_line)
         if v_val:
             self.version = v_val
@@ -293,7 +288,7 @@ class TelemetryAccumulator:
                 imei=self.imei or "",
                 iccid=self.iccid or "",
                 uin=self.uin or "",
-                version=self.version or "1.0.0",
+                version=self.version or "",
                 vin=self.vin or "MAT00000000000000",
                 model=self.model or "4G",
                 state=self.state or "DO NOT DELETE",

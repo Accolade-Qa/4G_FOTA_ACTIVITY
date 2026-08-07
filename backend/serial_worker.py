@@ -12,8 +12,8 @@ import serial
 import serial.tools.list_ports
 
 from PyQt6.QtCore import QThread, pyqtSignal
-from fota_engine.message_parser import MessageParser, TelemetryAccumulator
-from fota_engine.models import LoginPacketInfo
+from backend.message_parser import MessageParser, TelemetryAccumulator
+from backend.models import LoginPacketInfo
 
 logger = logging.getLogger(__name__)
 

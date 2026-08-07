@@ -1,7 +1,8 @@
-"""Minimalist Desktop UI Interface with Clean Polished Layout & Instant Launch.
+"""Minimalist Desktop UI Interface Main Window Controller.
 
 Provides light theme styling, interactive serial AT command sending with Up/Down arrow history,
 smart auto-scroll, state selection dropdown, and automated CIP2 QA server verification and reboot handling.
+Imports modular UI widgets from ui.widgets.
 """
 
 import json
@@ -10,152 +11,43 @@ import logging
 from pathlib import Path
 from typing import Optional, List
 
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QFont, QTextCursor
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
-    QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+import os
+import sys
+from pathlib import Path
+
 # Add repo root to Python path
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from fota_engine.config import Config
-from fota_engine.models import LoginPacketInfo
-from fota_engine.orchestrator import FotaOrchestrator
-from fota_engine.serial_worker import SerialWorker
-from fota_engine.message_parser import MessageParser
+from backend.config import Config
+from backend.models import LoginPacketInfo
+from backend.orchestrator import FotaOrchestrator
+from backend.serial_worker import SerialWorker
+from backend.message_parser import MessageParser
 from ui.styles import LIGHT_THEME_QSS
+from ui.widgets import (
+    ApiSyncWorker,
+    CommandHistoryLineEdit,
+    InteractiveTerminalConsole,
+    SnackbarWidget,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class ApiSyncWorker(QThread):
-    """Background thread for non-blocking REST API state matrix synchronization on startup."""
-
-    sync_done_signal = pyqtSignal(bool, str)
-
-    def __init__(self, orchestrator: FotaOrchestrator, parent=None) -> None:
-        super().__init__(parent)
-        self.orchestrator = orchestrator
-
-    def run(self) -> None:
-        """Run API sync in background without freezing main UI thread."""
-        try:
-            ok = self.orchestrator.initialize_system()
-            msg = "API State Matrix Sync Complete." if ok else "Using cached state matrix."
-            self.sync_done_signal.emit(ok, msg)
-        except Exception as e:
-            logger.warning("Background API sync exception: %s", e)
-            self.sync_done_signal.emit(False, str(e))
-
-
-class CommandHistoryLineEdit(QLineEdit):
-    """QLineEdit supporting command history navigation via Up and Down arrow keys."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.history: List[str] = []
-        self.history_idx: int = -1
-
-    def record_command(self, cmd: str) -> None:
-        """Add executed command string to history list."""
-        if cmd and (not self.history or self.history[-1] != cmd):
-            self.history.append(cmd)
-        self.history_idx = len(self.history)
-
-    def keyPressEvent(self, event) -> None:
-        """Navigate command history with Up and Down arrow keys."""
-        if event.key() == Qt.Key.Key_Up:
-            if self.history and self.history_idx > 0:
-                self.history_idx -= 1
-                self.setText(self.history[self.history_idx])
-            elif self.history and self.history_idx == -1:
-                self.history_idx = len(self.history) - 1
-                self.setText(self.history[self.history_idx])
-            event.accept()
-        elif event.key() == Qt.Key.Key_Down:
-            if self.history and self.history_idx < len(self.history) - 1:
-                self.history_idx += 1
-                self.setText(self.history[self.history_idx])
-            elif self.history_idx >= len(self.history) - 1:
-                self.history_idx = len(self.history)
-                self.clear()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
-
-
-class InteractiveTerminalConsole(QPlainTextEdit):
-    """Interactive Monospace Console supporting instant Space/Enter scroll-to-bottom and Copy/Paste."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setProperty("class", "light-console")
-        self.setReadOnly(True)
-        self.setMaximumBlockCount(3000)
-
-    def keyPressEvent(self, event) -> None:
-        """Handle key events: Pressing Enter or Space scrolls instantly to the bottom of the log."""
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-            self.moveCursor(QTextCursor.MoveOperation.End)
-            event.accept()
-        else:
-            super().keyPressEvent(event)
-
-
-class SnackbarWidget(QFrame):
-    """Compact Floating Toast/Snackbar Notification Banner."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setProperty("class", "snackbar")
-        self.hide()
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 4, 10, 4)
-        layout.setSpacing(6)
-
-        self.lbl_text = QLabel("")
-        self.lbl_text.setStyleSheet("color: #f8fafc; font-weight: 600; font-size: 8.5pt;")
-
-        btn_close = QPushButton("✕")
-        btn_close.setProperty("class", "snackbar-close")
-        btn_close.setFixedWidth(16)
-        btn_close.clicked.connect(self.hide)
-
-        layout.addWidget(self.lbl_text)
-        layout.addWidget(btn_close)
-
-    def show_message(self, message: str, duration_ms: int = 3500) -> None:
-        """Display small snackbar message and auto-hide without freezing main UI."""
-        self.lbl_text.setText(message)
-        self.adjustSize()
-
-        if self.parent():
-            p_w = self.parent().width()
-            p_h = self.parent().height()
-            w = self.width()
-            h = self.height()
-            x = p_w - w - 20
-            y = p_h - h - 50
-            self.move(max(10, x), max(10, y))
-
-        self.show()
-        self.raise_()
-        QTimer.singleShot(duration_ms, self.hide)
 
 
 class MinimalFotaWindow(QMainWindow):
@@ -248,12 +140,12 @@ class MinimalFotaWindow(QMainWindow):
         tel_box.setContentsMargins(10, 6, 10, 6)
         tel_box.setSpacing(14)
 
-        self.lbl_imei = self._add_stat(tel_box, "IMEI", "---------------")
-        self.lbl_uin = self._add_stat(tel_box, "UIN", "ACON--------")
-        self.lbl_vin = self._add_stat(tel_box, "VIN", "MAT--------------")
-        self.lbl_iccid = self._add_stat(tel_box, "ICCID", "--------------------")
+        self.lbl_imei = self._add_stat(tel_box, "IMEI", "---")
+        self.lbl_uin = self._add_stat(tel_box, "UIN", "---")
+        self.lbl_vin = self._add_stat(tel_box, "VIN", "---")
+        self.lbl_iccid = self._add_stat(tel_box, "ICCID", "---")
         self.lbl_state = self._add_stat(tel_box, "CURRENT STATE", "DO NOT DELETE")
-        self.lbl_ver = self._add_stat(tel_box, "FIRMWARE", "1.0.0 → Waiting")
+        self.lbl_ver = self._add_stat(tel_box, "FIRMWARE", "---")
 
         btn_clear_info = QPushButton("Clear Info")
         btn_clear_info.setProperty("class", "btn-secondary")
@@ -329,7 +221,6 @@ class MinimalFotaWindow(QMainWindow):
         target_path = self.config.firmware_json_path
         if target_path.exists():
             try:
-                from fota_engine.message_parser import MessageParser
                 MessageParser.load_valid_states_from_json(target_path)
                 with open(target_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -453,12 +344,12 @@ class MinimalFotaWindow(QMainWindow):
     @pyqtSlot()
     def _clear_device_telemetry(self) -> None:
         """Reset all captured device telemetry fields back to defaults."""
-        self.lbl_imei.setText("---------------")
-        self.lbl_uin.setText("ACON--------")
-        self.lbl_vin.setText("MAT--------------")
-        self.lbl_iccid.setText("--------------------")
-        self.lbl_state.setText(self.combo_states.currentText())
-        self.lbl_ver.setText("1.0.0 → Waiting")
+        self.lbl_imei.setText("---")
+        self.lbl_uin.setText("---")
+        self.lbl_vin.setText("---")
+        self.lbl_iccid.setText("---")
+        self.lbl_state.setText(self.combo_states.currentText() or "DO NOT DELETE")
+        self.lbl_ver.setText("---")
         self._last_toast_key = None
         
         if self.orchestrator:
@@ -477,16 +368,19 @@ class MinimalFotaWindow(QMainWindow):
     @pyqtSlot(object)
     def _on_device_info(self, info: LoginPacketInfo) -> None:
         """Display captured telemetry and trigger freeze-free Snackbar Alert."""
-        self.lbl_imei.setText(info.imei or "---------------")
-        self.lbl_uin.setText(info.uin or "ACON--------")
-        self.lbl_vin.setText(info.vin or "MAT--------------")
-        self.lbl_iccid.setText(info.iccid or "--------------------")
+        self.lbl_imei.setText(info.imei or "---")
+        self.lbl_uin.setText(info.uin or "---")
+        self.lbl_vin.setText(info.vin or "---")
+        self.lbl_iccid.setText(info.iccid or "---")
 
-        curr_state = info.state if (info.state and info.state not in ("DO NOT DELETE", "is Factory", "connected")) else self.combo_states.currentText()
+        curr_state = info.state if (info.state and info.state not in ("is Factory", "connected", "---", "")) else (self.combo_states.currentText() or "DO NOT DELETE")
         self.lbl_state.setText(curr_state)
         
         target = self.orchestrator.target_version or "Latest"
-        self.lbl_ver.setText(f"{info.version} → {target}")
+        if info.version:
+            self.lbl_ver.setText(f"{info.version} → {target}")
+        else:
+            self.lbl_ver.setText("---")
 
         # Trigger Snackbar ONLY ONCE when a new UIN is detected (prevents UI freeze)
         toast_key = (info.uin, info.imei)

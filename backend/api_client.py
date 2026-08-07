@@ -2,7 +2,9 @@
 
 Handles authentication, fetching state server matrices & firmware IDs,
 writing structured input/servers.json, and submitting FOTA initialization triggers.
-Pulls state servers exclusively from configured API endpoints.
+Implements 2-step API flow:
+1. GET /api/server/getServerData?page=1&size=1000&search=
+2. GET /api/server/getServerDataByUId?id={_id} -> extracts firmwareIds array
 """
 
 import json
@@ -17,8 +19,8 @@ try:
 except Exception:
     pass
 
-from fota_engine.config import Config
-from fota_engine.models import FotaTriggerPayload
+from backend.config import Config
+from backend.models import FotaTriggerPayload
 
 logger = logging.getLogger(__name__)
 
@@ -76,87 +78,119 @@ class FotaApiClient:
             logger.info("Initialized default state servers matrix at %s", target_path)
 
     def authenticate(self) -> bool:
-        """Authenticate with configured portal API using userEmail/password to acquire valid JWT bearer token."""
+        """Authenticate with configured portal API using userEmail/password from .env to acquire valid JWT bearer token."""
         if self.token:
             return True
 
-        credentials = [
-            (self.config.portal_user, self.config.portal_pass),
-            ("super.admin@accoladeelectronics.com", "LWj09BEg"),
-            ("suraj.bhalerao@accoladeelectronics.com", "8SI514X@"),
-            ("suraj.bhalerao@accoladeelectronics.com", "6xwn8zg4"),
-        ]
+        user = self.config.portal_user
+        pwd = self.config.portal_pass
 
-        login_urls = [
-            "https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/users/login",
-            "https://aepl-tcu4g-qa.accoladeelectronics.com:6101/users/login",
-            "http://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/users/login",
-            "http://lct-a4g-qa.accoladeelectronics.com:9090/users/login",
-        ]
+        if not user or not pwd:
+            logger.warning("No portal credentials found in .env configuration.")
+            return False
 
-        for user, pwd in credentials:
-            if not user or not pwd:
-                continue
+        login_url = "https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/user/login"
+        payload = {"userEmail": user, "password": pwd}
 
-            payloads = [
-                {"userEmail": user, "password": pwd},
-                {"email": user, "password": pwd},
-                {"username": user, "password": pwd},
-            ]
+        try:
+            res = self.session.post(login_url, json=payload, timeout=8)
+            if res.status_code in (200, 201):
+                data = res.json()
+                token_val = (
+                    data.get("data", {}).get("token")
+                    or data.get("token")
+                    or data.get("data", {}).get("accessToken")
+                    or data.get("data", {}).get("user", {}).get("token")
+                    or data.get("accessToken")
+                )
+                user_id_val = (
+                    data.get("data", {}).get("id")
+                    or data.get("data", {}).get("_id")
+                    or data.get("id")
+                    or data.get("_id")
+                    or data.get("data", {}).get("user", {}).get("_id")
+                )
+                if user_id_val:
+                    self.user_id = str(user_id_val)
 
-            for login_url in login_urls:
-                for payload in payloads:
-                    try:
-                        res = self.session.post(login_url, json=payload, timeout=5)
-                        if res.status_code in (200, 201):
-                            data = res.json()
-                            token_val = (
-                                data.get("data", {}).get("token")
-                                or data.get("token")
-                                or data.get("data", {}).get("accessToken")
-                                or data.get("data", {}).get("user", {}).get("token")
-                                or data.get("accessToken")
-                            )
-                            user_id_val = (
-                                data.get("data", {}).get("id")
-                                or data.get("data", {}).get("_id")
-                                or data.get("id")
-                                or data.get("_id")
-                                or data.get("data", {}).get("user", {}).get("_id")
-                            )
-                            if user_id_val:
-                                self.user_id = str(user_id_val)
-
-                            if token_val and isinstance(token_val, str) and len(token_val) > 15:
-                                self.token = str(token_val)
-                                self.session.headers.update({
-                                    "Authorization": f"Bearer {self.token}",
-                                    "token": self.token,
-                                    "x-access-token": self.token,
-                                })
-                                logger.info("API login successful for %s. Bearer JWT token acquired. User ID: %s", user, self.user_id)
-                                print(f"✅ API Login Successful ({login_url}) for {user}")
-                                return True
-                    except Exception as err:
-                        logger.debug("API login connection error for %s: %s", login_url, err)
+                if token_val and isinstance(token_val, str) and len(token_val) > 15:
+                    self.token = str(token_val)
+                    self.session.headers.update({
+                        "Authorization": f"Bearer {self.token}",
+                        "token": self.token,
+                        "x-access-token": self.token,
+                    })
+                    logger.info("API login successful for %s. Bearer JWT token acquired. User ID: %s", user, self.user_id)
+                    print(f"✅ API Login Successful ({login_url}) for {user}")
+                    return True
+        except Exception as err:
+            logger.debug("API login connection error for %s: %s", login_url, err)
 
         logger.warning("All API login attempts failed. Operating with cached matrix.")
         return False
 
+    def _extract_firmware_dict(self, fw: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        """Helper to extract firmware metadata dictionary from API JSON item."""
+        if not isinstance(fw, dict):
+            return None
+
+        ver = (
+            fw.get("firmwareVersion")
+            or fw.get("version")
+            or fw.get("firmware_version")
+            or fw.get("ver")
+            or fw.get("ufw")
+            or ""
+        )
+        expected_ver = (
+            fw.get("expectedFirmwareVersion")
+            or fw.get("targetVersion")
+            or fw.get("expectedVersion")
+            or fw.get("expected_firmware_version")
+            or fw.get("nextVersion")
+            or ""
+        )
+        file_name = (
+            fw.get("fileName")
+            or fw.get("file_name")
+            or fw.get("filename")
+            or fw.get("file")
+            or ""
+        )
+        desc = (
+            fw.get("description")
+            or fw.get("desc")
+            or fw.get("remarks")
+            or ""
+        )
+
+        if ver:
+            return {
+                "version": str(ver).strip(),
+                "expectedFirmwareVersion": str(expected_ver).strip(),
+                "fileName": str(file_name).strip(),
+                "description": str(desc).strip(),
+            }
+        return None
+
     def fetch_and_save_servers_matrix(self) -> bool:
-        """Fetch all state servers and their firmwares exclusively from configured FETCH_SERVERS_API_URL into input/servers.json."""
+        """Fetch state servers list and firmware matrix strictly from environment configured API URLs into input/servers.json."""
         self._ensure_fallback_json()
         
         self.authenticate()
         target_path = self.config.firmware_json_path
-        api_url = self.config.fetch_servers_api_url
+        list_url = self.config.fetch_servers_api_url
         by_id_template = self.config.fetch_server_data_by_id_url
+
+        if not list_url:
+            logger.warning("No FETCH_SERVERS_API_URL configured in .env.")
+            return False
 
         parsed_matrix: Dict[str, List[Dict[str, str]]] = {}
 
         try:
-            logger.info("Fetching state server list from configured API: %s", api_url)
-            res = self.session.get(api_url, timeout=10)
+            logger.info("Step 1: Fetching state servers list from .env API URL: %s", list_url)
+            res = self.session.get(list_url, timeout=8)
             if res.status_code == 200:
                 res_json = res.json()
                 data_field = res_json.get("data", {})
@@ -168,6 +202,8 @@ class FotaApiClient:
                 else:
                     state_list = []
 
+                logger.info("Retrieved %d state servers from API. Step 2: Fetching firmwares per server...", len(state_list))
+
                 for item in state_list:
                     if not isinstance(item, dict):
                         continue
@@ -175,81 +211,49 @@ class FotaApiClient:
                     state_id = item.get("_id") or item.get("id")
                     state_name = item.get("state") or item.get("stateName") or item.get("stateServerName")
 
-                    if not state_name:
+                    if not state_name or not state_id:
                         continue
 
                     firmwares_for_state: List[Dict[str, str]] = []
 
-                    # 1. Extract embedded firmwareIds if present
-                    fw_list = item.get("firmwareIds", []) or item.get("firmwares", [])
-                    if isinstance(fw_list, list) and fw_list:
-                        for fw in fw_list:
-                            if isinstance(fw, dict):
-                                ver = fw.get("firmwareVersion") or fw.get("version") or ""
-                                expected_ver = fw.get("expectedFirmwareVersion") or fw.get("targetVersion") or fw.get("expectedVersion") or ""
-                                file_name = fw.get("fileName") or fw.get("file_name") or ""
-                                desc = fw.get("description") or fw.get("desc") or ""
-
-                                if ver:
-                                    firmwares_for_state.append({
-                                        "version": str(ver).strip(),
-                                        "expectedFirmwareVersion": str(expected_ver).strip(),
-                                        "fileName": str(file_name).strip(),
-                                        "description": str(desc).strip()
-                                    })
-
-                    # 2. If firmwareIds not embedded, fetch details by ID using FETCH_SERVER_DATA_BY_ID
-                    if not firmwares_for_state and state_id and by_id_template:
+                    # Step 2: Query per-server detail endpoint configured in .env
+                    if by_id_template:
                         detail_url = by_id_template.format(id=state_id)
                         try:
-                            detail_res = self.session.get(detail_url, timeout=5)
-                            if detail_res.status_code == 200:
-                                detail_json = detail_res.json()
-                                d_data = detail_json.get("data", [])
+                            d_res = self.session.get(detail_url, timeout=5)
+                            if d_res.status_code == 200:
+                                d_json = d_res.json()
+                                d_data = d_json.get("data", [])
                                 
                                 if isinstance(d_data, list) and d_data:
-                                    state_obj = d_data[0]
+                                    server_obj = d_data[0]
                                 elif isinstance(d_data, dict):
-                                    state_obj = d_data
+                                    server_obj = d_data
                                 else:
-                                    state_obj = {}
+                                    server_obj = {}
 
-                                sub_fw_list = state_obj.get("firmwareIds", []) or state_obj.get("firmwares", [])
-                                for fw in sub_fw_list:
-                                    if isinstance(fw, dict):
-                                        ver = fw.get("firmwareVersion") or fw.get("version") or ""
-                                        expected_ver = fw.get("expectedFirmwareVersion") or fw.get("targetVersion") or ""
-                                        file_name = fw.get("fileName") or ""
-                                        desc = fw.get("description") or ""
-
-                                        if ver:
-                                            firmwares_for_state.append({
-                                                "version": str(ver).strip(),
-                                                "expectedFirmwareVersion": str(expected_ver).strip(),
-                                                "fileName": str(file_name).strip(),
-                                                "description": str(desc).strip()
-                                            })
+                                fw_list = server_obj.get("firmwareIds", []) or server_obj.get("firmwares", [])
+                                if isinstance(fw_list, list):
+                                    for fw in fw_list:
+                                        if isinstance(fw, dict):
+                                            fw_dict = self._extract_firmware_dict(fw)
+                                            if fw_dict and fw_dict not in firmwares_for_state:
+                                                firmwares_for_state.append(fw_dict)
                         except Exception as err:
-                            logger.warning("Error fetching detail for state %s: %s", state_name, err)
+                            logger.debug("Error fetching server details for %s (_id: %s): %s",
+                                         state_name, state_id, err)
 
-                    if firmwares_for_state:
-                        parsed_matrix[state_name] = firmwares_for_state
-                    else:
-                        parsed_matrix[state_name] = [
-                            {
-                                "version": "1.0.0",
-                                "expectedFirmwareVersion": "",
-                                "fileName": "TCP01.bin",
-                                "description": "Base firmware"
-                            }
-                        ]
+                    parsed_matrix[state_name] = firmwares_for_state
 
+                if parsed_matrix:
+                    logger.info("Successfully fetched firmwares for %d state servers from API.", len(parsed_matrix))
+                    print(f"✅ Synced {len(parsed_matrix)} State Servers & Firmwares from .env API into servers.json")
         except Exception as err:
-            logger.warning("Failed to fetch state matrix from configured API (%s): %s", api_url, err)
+            logger.warning("Failed to fetch state matrix from .env API endpoint %s: %s", list_url, err)
 
-        if "DO NOT DELETE" not in parsed_matrix:
+        if "DO NOT DELETE" not in parsed_matrix or not parsed_matrix["DO NOT DELETE"]:
             parsed_matrix["DO NOT DELETE"] = self.DEFAULT_SERVERS_MATRIX["states"]["DO NOT DELETE"]
-        if "Default" not in parsed_matrix:
+        if "Default" not in parsed_matrix or not parsed_matrix["Default"]:
             parsed_matrix["Default"] = self.DEFAULT_SERVERS_MATRIX["states"]["Default"]
 
         final_output = {"states": parsed_matrix}
@@ -258,7 +262,6 @@ class FotaApiClient:
         with open(target_path, "w", encoding="utf-8") as f:
             json.dump(final_output, f, indent=2)
         logger.info("Saved updated state servers matrix to %s (%d states)", target_path.name, len(parsed_matrix))
-        print(f"✅ Synced {len(parsed_matrix)} State Servers from {api_url} into servers.json")
 
         return True
 
