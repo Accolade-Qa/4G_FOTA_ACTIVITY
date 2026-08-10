@@ -25,6 +25,8 @@ class SerialWorker(QThread):
     raw_log_signal = pyqtSignal(str)
     login_packet_signal = pyqtSignal(object)  # LoginPacketInfo
     progress_signal = pyqtSignal(float)
+    sleep_countdown_signal = pyqtSignal(int)
+    sleep_event_signal = pyqtSignal(str)
     port_status_signal = pyqtSignal(bool, str)
 
     def __init__(self, port_name: str = "", baud_rate: int = 115200, parent=None) -> None:
@@ -129,6 +131,17 @@ class SerialWorker(QThread):
                         prog = MessageParser.parse_download_progress(cleaned)
                         if prog is not None:
                             self.progress_signal.emit(prog)
+
+                        # Check for [PLA] SLEEP countdown timer & sleep events
+                        if MessageParser.is_sleep_event(cleaned):
+                            self.sleep_event_signal.emit(cleaned)
+
+                        sleep_sec = MessageParser.parse_pla_sleep_countdown(cleaned)
+                        if sleep_sec is not None:
+                            self.sleep_countdown_signal.emit(sleep_sec)
+                            if sleep_sec == 0:
+                                logger.info("PLA Sleep countdown reached 0s (Soft Shutdown/Sleep). Resetting login capture for post-reboot logs.")
+                                self.reset_login_capture()
 
                         # Harvest telemetry across multi-line reboot logs
                         info = self.accumulator.feed_line(cleaned)

@@ -211,8 +211,8 @@ class MinimalFotaWindow(QMainWindow):
 
     @pyqtSlot(float)
     def _on_progress_update(self, val: float) -> None:
-        """Handle download progress update."""
-        self.lbl_msg.setText(f"FOTA Downloading: {val:.1f}%")
+        """Handle download progress update with 2-decimal precision (e.g. 2.95%)."""
+        self.lbl_msg.setText(f"FOTA Downloading: {val:.2f}%")
 
     @pyqtSlot(bool, str)
     def _on_api_sync_complete(self, ok: bool, msg: str) -> None:
@@ -296,6 +296,7 @@ class MinimalFotaWindow(QMainWindow):
         self.serial_worker.raw_log_signal.connect(self._queue_log_line)
         self.serial_worker.progress_signal.connect(self.orchestrator.update_progress)
         self.serial_worker.login_packet_signal.connect(self._on_login_packet_received)
+        self.serial_worker.sleep_event_signal.connect(self._on_sleep_event)
         self.serial_worker.port_status_signal.connect(self._on_port_status)
         self.serial_worker.start()
 
@@ -320,6 +321,13 @@ class MinimalFotaWindow(QMainWindow):
         sel_state = self.combo_states.currentText()
         if self.orchestrator:
             self.orchestrator.process_login_packet(info, selected_ui_state=sel_state)
+
+    @pyqtSlot(str)
+    def _on_sleep_event(self, log_line: str) -> None:
+        """Handle device sleep and soft shutdown detection signals."""
+        msg = "🌙 Device Sleep / Soft Shutdown Detected!"
+        self.lbl_msg.setText(f"{msg} Monitoring for wake-up boot log...")
+        self.snackbar.show_message(msg, duration_ms=4000)
 
     def _stop_engine(self) -> None:
         """Stop serial engine and unlock port selection."""
@@ -381,6 +389,7 @@ class MinimalFotaWindow(QMainWindow):
         self.lbl_iccid.setText("---")
         self.lbl_state.setText(self.combo_states.currentText() or "DO NOT DELETE")
         self.lbl_ver.setText("---")
+        self.lbl_sleep.setText("---")
         self._last_toast_key = None
         
         if self.orchestrator:

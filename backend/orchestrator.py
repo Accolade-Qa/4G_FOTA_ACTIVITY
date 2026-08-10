@@ -209,7 +209,7 @@ class FotaApiPollerWorker(QThread):
 
                     # Determine adaptive polling delay: 600s (10 min) if < 95%, 120s (2 min) if >= 95%
                     sleep_sec = 120 if progress >= 95.0 else 600
-                    logger.info("Polled IMEI %s -> Progress: %.1f%%, Pings: %d, Attempts: %d/3. Next poll in %d seconds.",
+                    logger.info("Polled IMEI %s -> Progress: %.2f%%, Pings: %d, Attempts: %d/3. Next poll in %d seconds.",
                                 self.imei, progress, ping_count, attempt_count, sleep_sec)
 
                     for _ in range(sleep_sec):
@@ -376,7 +376,7 @@ class FotaOrchestrator(QObject):
         attempt_cnt = item.get("attemptCount", 0) or 0
 
         self.progress_signal.emit(progress)
-        status_msg = f"FOTA Status: {status_str} | Progress: {progress:.1f}% | Pings: {ping_cnt} | Attempts: {attempt_cnt}/3"
+        status_msg = f"FOTA Status: {status_str} | Progress: {progress:.2f}% | Pings: {ping_cnt} | Attempts: {attempt_cnt}/3"
         self.status_signal.emit(status_msg)
 
         if self.current_device:

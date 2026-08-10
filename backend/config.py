@@ -58,12 +58,16 @@ class Config:
         return os.getenv("PORTAL_URL", "https://aepl-tcu4g-qa.accoladeelectronics.com/login")
 
     @property
+    def portal_login_url(self) -> str:
+        return os.getenv("PORTAL_LOGIN_URL", "https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/user/login")
+
+    @property
     def portal_user(self) -> str:
-        return os.getenv("PORTAL_USER", "suraj.bhalerao@accoladeelectronics.com")
+        return os.getenv("PORTAL_USER", "")
 
     @property
     def portal_pass(self) -> str:
-        return os.getenv("PORTAL_PASS", "6xwn8zg4")
+        return os.getenv("PORTAL_PASS", "")
 
     @property
     def serial_port(self) -> str:
@@ -104,7 +108,7 @@ class Config:
 
     @property
     def user_id(self) -> str:
-        return os.getenv("USER_ID", "64116e41c56760941baea6ac")
+        return os.getenv("USER_ID", "")
 
     @property
     def fota_trigger_api_url(self) -> str:

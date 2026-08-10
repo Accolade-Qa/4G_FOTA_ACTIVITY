@@ -37,6 +37,7 @@ class MessageParser:
     ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     PROGRESS_PATTERN = re.compile(r"(?:Downloading|FOTA Progress|Progress):\s*(\d+(?:\.\d+)?)\s*%", re.IGNORECASE)
     CIP2_PATTERN = re.compile(r"(?:CIP2|CIP\s*2|IP2|MQTT\s*Server|SERVER2|SERVER\s*2)[:=,\s]+([A-Za-z0-9._-]+)", re.IGNORECASE)
+    PLA_SLEEP_PATTERN = re.compile(r"\[PLA\]\s*SLEEP\s+(\d+)", re.IGNORECASE)
 
     # Dynamic valid states populated from API response / servers.json
     DYNAMIC_VALID_STATES: Set[str] = {"do not delete", "default"}
@@ -128,6 +129,38 @@ class MessageParser:
             except ValueError:
                 pass
         return None
+
+    @classmethod
+    def parse_pla_sleep_countdown(cls, line: str) -> Optional[int]:
+        """Extract [PLA] SLEEP countdown timer integer (e.g. 172 from 'INFO: [PLA] SLEEP 172...')."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return None
+        match = cls.PLA_SLEEP_PATTERN.search(clean_line)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+        return None
+
+    SLEEP_EVENT_PATTERNS = [
+        re.compile(r"\[PLA\]\s*SLEEP\s+(\d+)", re.IGNORECASE),
+        re.compile(r"GSM\s+soft\s+shutdown\s+pass", re.IGNORECASE),
+        re.compile(r"synchronized\s+suspend\s+ok", re.IGNORECASE),
+        re.compile(r"PLA\s+task\s+is\s+now\s+idle", re.IGNORECASE),
+    ]
+
+    @classmethod
+    def is_sleep_event(cls, line: str) -> bool:
+        """Detect if line signals device entering sleep or soft shutdown state."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return False
+        for pat in cls.SLEEP_EVENT_PATTERNS:
+            if pat.search(clean_line):
+                return True
+        return False
 
     @classmethod
     def parse_firmware_version(cls, line: str) -> Optional[str]:
