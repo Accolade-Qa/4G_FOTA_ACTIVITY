@@ -124,7 +124,7 @@ class MinimalFotaWindow(QMainWindow):
         self.btn_theme.setToolTip("Toggle Dark / Light Theme")
         self.btn_theme.clicked.connect(self._toggle_theme)
 
-        self.btn_toggle = QPushButton("Start Engine")
+        self.btn_toggle = QPushButton("Start")
         self.btn_toggle.setProperty("class", "btn-primary")
         self.btn_toggle.clicked.connect(self._toggle_engine)
 
