@@ -11,6 +11,7 @@ Coordinates the end-to-end continuous FOTA lifecycle:
 """
 
 import csv
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -33,39 +34,27 @@ class FotaOrchestrator(QObject):
 
     # PyQt Signals for UI Updates
     status_signal = pyqtSignal(str)           # System status message
-    device_info_signal = pyqtSignal(object)   # LoginPacketInfo object
-    progress_signal = pyqtSignal(float)       # Download progress %
-    audit_signal = pyqtSignal(object)         # FotaAuditRecord object
-    request_command_signal = pyqtSignal(str)  # Request serial command execution (*SET#CIP2#...)
+    progress_signal = pyqtSignal(float)        # Download percentage (0-100)
+    device_info_signal = pyqtSignal(object)   # LoginPacketInfo entity
+    audit_signal = pyqtSignal(object)         # FotaAuditRecord entity
+    request_command_signal = pyqtSignal(str)  # Auto-execute serial AT command request
 
     def __init__(self, config: Optional[Config] = None) -> None:
         super().__init__()
         self.config = config or Config()
         self.api_client = FotaApiClient(self.config)
         self.resolver = FirmwareResolver(self.config.firmware_json_path)
-        self.extension_mgr = ExtensionManager()
+        self.extension_mgr = ExtensionManager(self.config)
 
         self.current_device: Optional[LoginPacketInfo] = None
         self.target_version: Optional[str] = None
-        self.is_upgrading = False
+        self.is_upgrading: bool = False
         self.attempted_uins: Set[str] = set()
-        self.cip2_validated = False
+        self.cip2_validated: bool = False
         self.target_qa_domain = "aepl-tcu4g-qa.accoladeelectronics.com"
 
-        # Initialize audit CSV header if missing
-        self._init_audit_file()
-
-    def _init_audit_file(self) -> None:
-        """Create results/fota_audit.csv with headers if it does not exist."""
-        audit_path = self.config.audit_csv_path
-        audit_path.parent.mkdir(parents=True, exist_ok=True)
-        if not audit_path.exists() or audit_path.stat().st_size == 0:
-            with open(audit_path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Timestamp", "UIN", "InitialVersion", "FinalVersion", "Status", "Remarks"])
-
     def reset_orchestrator(self) -> None:
-        """Reset orchestrator state for a fresh device or manual reset."""
+        """Reset orchestrator state upon manual UI telemetry clearing."""
         self.current_device = None
         self.target_version = None
         self.is_upgrading = False
@@ -73,8 +62,8 @@ class FotaOrchestrator(QObject):
         self.cip2_validated = False
 
     def initialize_system(self) -> bool:
-        """Fetch remote state/firmware matrix from API on system startup."""
-        self.status_signal.emit("Syncing state & firmware matrix from API...")
+        """Synchronize State Server Matrix & Firmware IDs from REST API on startup."""
+        logger.info("Initializing Continuous FOTA Orchestrator...")
         ok = self.api_client.fetch_and_save_servers_matrix()
         self.resolver.reload()
         MessageParser.load_valid_states_from_json(self.config.firmware_json_path)
@@ -141,8 +130,10 @@ class FotaOrchestrator(QObject):
         if not next_ver:
             if not self.resolver.validate_version_exists(device_state, login_info.version):
                 msg = f"⚠️ Version Validation Barrier: Firmware version '{login_info.version}' is NOT listed in servers.json for state '{device_state}'. FOTA process blocked."
+                self._write_audit(login_info.uin, login_info.version, "", "BLOCKED_VERSION_NOT_FOUND", msg)
             else:
                 msg = f"Device {login_info.uin} is already at the latest firmware level ({login_info.version}) for state '{device_state}'."
+                self._write_audit(login_info.uin, login_info.version, login_info.version, "UP_TO_DATE", msg)
             logger.warning(msg)
             self.status_signal.emit(msg)
             return False
@@ -195,7 +186,7 @@ class FotaOrchestrator(QObject):
             self.is_upgrading = False
 
     def _write_audit(self, uin: str, initial_ver: str, final_ver: str, status: str, remarks: str) -> None:
-        """Write audit log entry to results/fota_audit.csv."""
+        """Write audit log entry to results/fota_results.csv and results/fota_results.json."""
         record = FotaAuditRecord(
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             uin=uin,
@@ -206,17 +197,57 @@ class FotaOrchestrator(QObject):
         )
         self.audit_signal.emit(record)
 
+        # 1. Write to results/fota_results.csv
+        csv_path = self.config.results_dir / "fota_results.csv"
         try:
-            with open(self.config.audit_csv_path, "a", newline="", encoding="utf-8") as f:
+            write_header = not csv_path.exists() or csv_path.stat().st_size == 0
+            with open(csv_path, "a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(["Timestamp", "UIN", "IMEI", "VIN", "InitialVersion", "TargetVersion", "State", "Status", "Remarks"])
+                imei_str = self.current_device.imei if self.current_device else ""
+                vin_str = self.current_device.vin if self.current_device else ""
+                state_str = self.current_device.state if self.current_device else ""
                 writer.writerow([
                     record.timestamp,
                     record.uin,
+                    imei_str,
+                    vin_str,
                     record.initial_version,
                     record.final_version,
+                    state_str,
                     record.status,
                     record.remarks,
                 ])
-            logger.info("Recorded audit entry for UIN %s: %s", uin, status)
+            logger.info("Recorded audit entry to CSV for UIN %s: %s", uin, status)
         except Exception as err:
-            logger.error("Failed to write audit log entry: %s", err)
+            logger.error("Failed to write audit CSV entry: %s", err)
+
+        # 2. Write to results/fota_results.json
+        json_path = self.config.results_dir / "fota_results.json"
+        try:
+            results_data = []
+            if json_path.exists() and json_path.stat().st_size > 0:
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        results_data = json.load(f)
+                except Exception:
+                    results_data = []
+
+            results_data.append({
+                "timestamp": record.timestamp,
+                "uin": record.uin,
+                "imei": self.current_device.imei if self.current_device else "",
+                "vin": self.current_device.vin if self.current_device else "",
+                "initialVersion": record.initial_version,
+                "targetVersion": record.final_version,
+                "state": self.current_device.state if self.current_device else "",
+                "status": record.status,
+                "remarks": record.remarks,
+            })
+
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(results_data, f, indent=2)
+            logger.info("Recorded audit entry to JSON for UIN %s: %s", uin, status)
+        except Exception as err:
+            logger.error("Failed to write audit JSON entry: %s", err)

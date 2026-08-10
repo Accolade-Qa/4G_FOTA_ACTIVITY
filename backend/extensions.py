@@ -31,7 +31,8 @@ class ExtensionHook:
 class ExtensionManager:
     """Manages active plugin hooks and executes callbacks during FOTA lifecycle events."""
 
-    def __init__(self) -> None:
+    def __init__(self, config: Any = None) -> None:
+        self.config = config
         self.hooks: List[ExtensionHook] = []
 
     def register_hook(self, hook: ExtensionHook) -> None:

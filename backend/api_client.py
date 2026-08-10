@@ -121,7 +121,7 @@ class FotaApiClient:
                         "x-access-token": self.token,
                     })
                     logger.info("API login successful for %s. Bearer JWT token acquired. User ID: %s", user, self.user_id)
-                    print(f"✅ API Login Successful ({login_url}) for {user}")
+                    print(f"API Login Successful ({login_url}) for {user}")
                     return True
         except Exception as err:
             logger.debug("API login connection error for %s: %s", login_url, err)
@@ -247,7 +247,7 @@ class FotaApiClient:
 
                 if parsed_matrix:
                     logger.info("Successfully fetched firmwares for %d state servers from API.", len(parsed_matrix))
-                    print(f"✅ Synced {len(parsed_matrix)} State Servers & Firmwares from .env API into servers.json")
+                    print(f"Synced {len(parsed_matrix)} State Servers & Firmwares from .env API into servers.json")
         except Exception as err:
             logger.warning("Failed to fetch state matrix from .env API endpoint %s: %s", list_url, err)
 

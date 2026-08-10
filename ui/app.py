@@ -409,6 +409,14 @@ class MinimalFotaWindow(QMainWindow):
 
             self.console.appendPlainText(lines)
 
+            # Write terminal logs to logs/terminal_session.log
+            try:
+                term_log_path = self.config.logs_dir / "terminal_session.log"
+                with open(term_log_path, "a", encoding="utf-8") as f:
+                    f.write(lines + "\n")
+            except Exception as err:
+                logger.debug("Failed writing terminal log: %s", err)
+
             if at_bottom:
                 sb.setValue(sb.maximum())
             else:

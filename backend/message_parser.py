@@ -15,6 +15,16 @@ from backend.models import LoginPacketInfo
 logger = logging.getLogger(__name__)
 
 INVALID_STATE_WORDS = {"on", "off", "true", "false", "idle", "pass", "fail", "null", "none", "ok", "succ"}
+INVALID_VIN_WORDS = {
+    "SYNCHRONIZATION", "UNSYNCHRONIZATION", "SYNCHRONIZED", "AUTHENTICATION", "INITIALIZATION",
+    "CONFIGURATION", "DISCONNECTED", "CONNECTING", "ESTABLISHED", "RECONNECTING",
+    "COMMUNICATION", "ACKNOWLEDGEMENT", "RECOMMENDATION", "SPECIFICATION", "IDENTIFICATION",
+    "REPRESENTATION", "TRANSMISSION", "RETRANSMISSION", "SUBSCRIPTION", "UNSUBSCRIPTION",
+    "REGISTRATION", "DEREGISTRATION", "ADMINISTRATION", "ORGANIZATION", "IMPLEMENTATION",
+    "DOCUMENTATION", "APPLICATION", "NOTIFICATION", "VERIFICATION", "AUTHORIZATION",
+    "CERTIFICATION", "DETERMINATION", "INVESTIGATION", "RESERVED", "BOOTLOADER",
+    "SUCCESSFULLY", "UNSUCCESSFUL", "TERMINATED", "DISCONNECTED"
+}
 
 
 class MessageParser:
@@ -71,13 +81,16 @@ class MessageParser:
 
     @classmethod
     def is_valid_vin(cls, vin: Optional[str]) -> bool:
-        """Validate VIN consisting of 14 to 18 alphanumeric characters (e.g. ACCDEV07241580138 or MAT...)."""
+        """Validate VIN consisting of 14 to 18 alphanumeric characters (must contain numeric digits)."""
         if not vin:
             return False
         clean = vin.strip().upper()
         if len(clean) not in range(14, 19):
             return False
-        if clean.isdigit() or clean.lower() in ("null", "none", "debug", "info", "system", "analog"):
+        if clean in INVALID_VIN_WORDS or clean.isdigit() or clean.lower() in ("null", "none", "debug", "info", "system", "analog"):
+            return False
+        # A real VIN or chassis ID must contain numeric digits (prevents English words like SYNCHRONIZATION)
+        if not any(char.isdigit() for char in clean):
             return False
         return bool(re.match(r"^[A-Z0-9]{14,18}$", clean))
 
@@ -118,23 +131,30 @@ class MessageParser:
 
     @classmethod
     def parse_firmware_version(cls, line: str) -> Optional[str]:
-        """Extract full firmware version string (e.g. '5.2.9 5th IP') exclusively from 'aeplFwVer' or 'SOFTWARE :' log formats."""
+        """Extract full firmware version string (e.g. '5.2.9 5th IP') from 'aeplFwVer', 'SOFTWARE :', or 'FIRMWARE :' log formats."""
         clean_line = cls.strip_ansi(line)
         if not clean_line:
             return None
 
-        # 1. Match 'aeplFwVer    5.2.9 5th IP'
-        m1 = re.search(r"aeplFwVer[:=,\s]+([^#\r\n]+)", clean_line, re.IGNORECASE)
+        # 1. Match 'aeplFwVer    5.2.9 5th IP' or 'aeplFwVer : 5.2.9 5th IP'
+        m1 = re.search(r"aeplFwVer[\s:=]+([^\r\n#]+)", clean_line, re.IGNORECASE)
         if m1:
-            val = m1.group(1).strip().rstrip("#").strip()
-            if val and val.lower() not in ("succ", "ok", "idle"):
+            val = re.sub(r"#+", "", m1.group(1)).strip()
+            if val and val.lower() not in ("succ", "ok", "idle", "none", "null"):
                 return val
 
         # 2. Match '######## SOFTWARE : 5.2.9 5th IP           ########'
-        m2 = re.search(r"SOFTWARE[:=,\s]+([^#\r\n]+)", clean_line, re.IGNORECASE)
+        m2 = re.search(r"SOFTWARE[\s:=]+([^\r\n#]+)", clean_line, re.IGNORECASE)
         if m2:
-            val = m2.group(1).strip().rstrip("#").strip()
-            if val and val.lower() not in ("succ", "ok", "idle", "falcon", "atcu"):
+            val = re.sub(r"#+", "", m2.group(1)).strip()
+            if val and val.lower() not in ("succ", "ok", "idle", "falcon", "atcu", "none", "null"):
+                return val
+
+        # 3. Match 'FIRMWARE : 5.2.9 5th IP' or 'FW VER : 5.2.9 5th IP'
+        m3 = re.search(r"(?:FIRMWARE|FW\s*VER(?:SION)?|UFW)[\s:=]+([^\r\n#]+)", clean_line, re.IGNORECASE)
+        if m3:
+            val = re.sub(r"#+", "", m3.group(1)).strip()
+            if val and val.lower() not in ("succ", "ok", "idle", "falcon", "atcu", "none", "null"):
                 return val
 
         return None
@@ -238,7 +258,7 @@ class TelemetryAccumulator:
                     updated = True
                     break
 
-        # 3. Extract VIN (Supports formats like '11. vin | VIN ACCDEV07241580138')
+        # 3. Extract VIN (Requires numeric digits, rejects words like SYNCHRONIZATION)
         vin_match = re.search(r"(?:vin|VIN|CHASSIS|chassis|Vehicle\s*ID)[\s\d\.\-_\|:=]*[\s\|:=]+([A-Z0-9]{14,18})", clean_line, re.IGNORECASE)
         if vin_match and MessageParser.is_valid_vin(vin_match.group(1)):
             self.vin = vin_match.group(1).upper()
@@ -270,11 +290,15 @@ class TelemetryAccumulator:
                 self.state = s_val
                 updated = True
 
-        # 6. Extract VERSION exclusively from aeplFwVer and SOFTWARE : formats
+        # 6. Extract VERSION exclusively from aeplFwVer, SOFTWARE :, or FIRMWARE : formats
         v_val = MessageParser.parse_firmware_version(clean_line)
         if v_val:
-            self.version = v_val
-            updated = True
+            if not self.version:
+                self.version = v_val
+                updated = True
+            elif len(v_val) > len(self.version) or (" " in v_val and " " not in self.version):
+                self.version = v_val
+                updated = True
 
         # 7. Extract MODEL
         model_match = re.search(r"(?:MODEL|model)[:=]?\s*([A-Za-z0-9_-]+)", clean_line)
