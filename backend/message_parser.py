@@ -131,27 +131,27 @@ class MessageParser:
 
     @classmethod
     def parse_firmware_version(cls, line: str) -> Optional[str]:
-        """Extract full firmware version string (e.g. '5.2.9 5th IP') from 'aeplFwVer', 'SOFTWARE :', or 'FIRMWARE :' log formats."""
+        """Extract full firmware version string (e.g. '5.2.9 5th IP') strictly from 'aeplFwVer', 'SOFTWARE :', or 'FIRMWARE :' log formats."""
         clean_line = cls.strip_ansi(line)
-        if not clean_line:
+        if not clean_line or "sver" in clean_line.lower() or "version |" in clean_line.lower():
             return None
 
         # 1. Match 'aeplFwVer    5.2.9 5th IP' or 'aeplFwVer : 5.2.9 5th IP'
-        m1 = re.search(r"aeplFwVer[\s:=]+([^\r\n#]+)", clean_line, re.IGNORECASE)
+        m1 = re.search(r"aeplFwVer[\s:=]+([0-9]+\.[0-9]+[^\r\n#]*)", clean_line, re.IGNORECASE)
         if m1:
             val = re.sub(r"#+", "", m1.group(1)).strip()
             if val and val.lower() not in ("succ", "ok", "idle", "none", "null"):
                 return val
 
         # 2. Match '######## SOFTWARE : 5.2.9 5th IP           ########'
-        m2 = re.search(r"SOFTWARE[\s:=]+([^\r\n#]+)", clean_line, re.IGNORECASE)
+        m2 = re.search(r"SOFTWARE[\s:=]+([0-9]+\.[0-9]+[^\r\n#]*)", clean_line, re.IGNORECASE)
         if m2:
             val = re.sub(r"#+", "", m2.group(1)).strip()
             if val and val.lower() not in ("succ", "ok", "idle", "falcon", "atcu", "none", "null"):
                 return val
 
-        # 3. Match 'FIRMWARE : 5.2.9 5th IP' or 'FW VER : 5.2.9 5th IP'
-        m3 = re.search(r"(?:FIRMWARE|FW\s*VER(?:SION)?|UFW)[\s:=]+([^\r\n#]+)", clean_line, re.IGNORECASE)
+        # 3. Match 'FIRMWARE : 5.2.9 5th IP'
+        m3 = re.search(r"\bFIRMWARE[\s:=]+([0-9]+\.[0-9]+[^\r\n#]*)", clean_line, re.IGNORECASE)
         if m3:
             val = re.sub(r"#+", "", m3.group(1)).strip()
             if val and val.lower() not in ("succ", "ok", "idle", "falcon", "atcu", "none", "null"):

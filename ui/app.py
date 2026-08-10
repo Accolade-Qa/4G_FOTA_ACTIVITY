@@ -39,7 +39,7 @@ from backend.models import LoginPacketInfo
 from backend.orchestrator import FotaOrchestrator
 from backend.serial_worker import SerialWorker
 from backend.message_parser import MessageParser
-from ui.styles import LIGHT_THEME_QSS
+from ui.styles import LIGHT_THEME_QSS, DARK_THEME_QSS
 from ui.widgets import (
     ApiSyncWorker,
     CommandHistoryLineEdit,
@@ -51,12 +51,13 @@ logger = logging.getLogger(__name__)
 
 
 class MinimalFotaWindow(QMainWindow):
-    """Ultra-Minimalist Light Theme Window with Clean Layout & Automated Reboot/CIP2 QA Verification."""
+    """Ultra-Minimalist Window with Light/Dark Theme Support & Automated Reboot/CIP2 QA Verification."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Continuous FOTA Utility")
         self.resize(1020, 650)
+        self.is_dark_theme = False
         self.setStyleSheet(LIGHT_THEME_QSS)
 
         self.config = Config(REPO_ROOT)
@@ -82,20 +83,20 @@ class MinimalFotaWindow(QMainWindow):
         self.api_sync_worker.start()
 
     def _init_ui(self) -> None:
-        """Build clean light interface layout."""
+        """Build clean light/dark interface layout."""
         root = QWidget(self)
         self.setCentralWidget(root)
 
         layout = QVBoxLayout(root)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(6)
+        layout.setSpacing(10)
 
-        # 1. Compact Light Header Bar
+        # 1. Top Header Bar (Title + Online Status + Target State Dropdown + Port Select + Theme Toggle + Refresh + Start/Stop Engine)
         hdr = QFrame()
         hdr.setProperty("class", "header-bar")
         hdr_box = QHBoxLayout(hdr)
-        hdr_box.setContentsMargins(10, 6, 10, 6)
-        hdr_box.setSpacing(10)
+        hdr_box.setContentsMargins(12, 6, 12, 6)
+        hdr_box.setSpacing(8)
 
         title = QLabel("FOTA UTILITY")
         title.setProperty("class", "app-title")
@@ -117,6 +118,12 @@ class MinimalFotaWindow(QMainWindow):
         self.btn_refresh.setToolTip("Refresh COM ports")
         self.btn_refresh.clicked.connect(self._refresh_ports)
 
+        self.btn_theme = QPushButton("🌙")
+        self.btn_theme.setProperty("class", "btn-icon")
+        self.btn_theme.setFixedWidth(32)
+        self.btn_theme.setToolTip("Toggle Dark / Light Theme")
+        self.btn_theme.clicked.connect(self._toggle_theme)
+
         self.btn_toggle = QPushButton("Start Engine")
         self.btn_toggle.setProperty("class", "btn-primary")
         self.btn_toggle.clicked.connect(self._toggle_engine)
@@ -129,6 +136,7 @@ class MinimalFotaWindow(QMainWindow):
         hdr_box.addWidget(QLabel("Port:"))
         hdr_box.addWidget(self.combo_ports)
         hdr_box.addWidget(self.btn_refresh)
+        hdr_box.addWidget(self.btn_theme)
         hdr_box.addWidget(self.btn_toggle)
 
         layout.addWidget(hdr)
@@ -244,7 +252,7 @@ class MinimalFotaWindow(QMainWindow):
         if self.orchestrator and self.orchestrator.current_device:
             self.orchestrator.current_device.state = state_name
             self.orchestrator.attempted_uins.discard(self.orchestrator.current_device.uin)
-            self.orchestrator.process_login_packet(self.orchestrator.current_device)
+            self.orchestrator.process_login_packet(self.orchestrator.current_device, selected_ui_state=state_name)
 
     def _refresh_ports(self) -> None:
         """Refresh COM ports dropdown."""
@@ -256,6 +264,21 @@ class MinimalFotaWindow(QMainWindow):
             self.combo_ports.addItem("No Ports")
 
     @pyqtSlot()
+    def _toggle_theme(self) -> None:
+        """Toggle between Light and Dark application themes."""
+        self.is_dark_theme = not getattr(self, "is_dark_theme", False)
+        if self.is_dark_theme:
+            self.setStyleSheet(DARK_THEME_QSS)
+            self.btn_theme.setText("☀️")
+            self.btn_theme.setToolTip("Switch to Light Theme")
+            self.lbl_msg.setText("Dark theme enabled.")
+        else:
+            self.setStyleSheet(LIGHT_THEME_QSS)
+            self.btn_theme.setText("🌙")
+            self.btn_theme.setToolTip("Switch to Dark Theme")
+            self.lbl_msg.setText("Light theme enabled.")
+
+    @pyqtSlot()
     def _toggle_engine(self) -> None:
         """Start or stop serial engine and lock/unlock port selection controls."""
         if self.serial_worker and self.serial_worker.isRunning():
@@ -264,7 +287,7 @@ class MinimalFotaWindow(QMainWindow):
             self._start_engine()
 
     def _start_engine(self) -> None:
-        """Start serial engine, lock port selection, and auto-fire reboot command (*SET#CRST#1#)."""
+        """Start serial engine, lock port selection, change UI status to ONLINE, and auto-fire reboot command (*SET#CRST#1#)."""
         port = self.combo_ports.currentText()
         if port == "No Ports":
             port = ""
@@ -272,16 +295,17 @@ class MinimalFotaWindow(QMainWindow):
         self.serial_worker = SerialWorker(port_name=port, baud_rate=self.config.serial_baud)
         self.serial_worker.raw_log_signal.connect(self._queue_log_line)
         self.serial_worker.progress_signal.connect(self.orchestrator.update_progress)
-        self.serial_worker.login_packet_signal.connect(self.orchestrator.process_login_packet)
+        self.serial_worker.login_packet_signal.connect(self._on_login_packet_received)
         self.serial_worker.port_status_signal.connect(self._on_port_status)
         self.serial_worker.start()
 
+        # Update UI Controls to ONLINE & Stop Engine
         self.combo_ports.setEnabled(False)
         self.btn_refresh.setEnabled(False)
 
         self.lbl_status.setText("● ONLINE")
         self.lbl_status.setProperty("class", "status-online")
-        self.btn_toggle.setText("Stop Engine")
+        self.btn_toggle.setText("Stop")
         self.btn_toggle.setProperty("class", "btn-danger")
 
         self.lbl_status.setStyle(self.lbl_status.style())
@@ -289,6 +313,13 @@ class MinimalFotaWindow(QMainWindow):
 
         # Auto-fire reboot command *SET#CRST#1# upon engine connection
         QTimer.singleShot(600, lambda: self._auto_execute_command("*SET#CRST#1#"))
+
+    @pyqtSlot(object)
+    def _on_login_packet_received(self, info: LoginPacketInfo) -> None:
+        """Forward received login packet to orchestrator with user selected state."""
+        sel_state = self.combo_states.currentText()
+        if self.orchestrator:
+            self.orchestrator.process_login_packet(info, selected_ui_state=sel_state)
 
     def _stop_engine(self) -> None:
         """Stop serial engine and unlock port selection."""
@@ -301,7 +332,7 @@ class MinimalFotaWindow(QMainWindow):
 
         self.lbl_status.setText("● OFFLINE")
         self.lbl_status.setProperty("class", "status-offline")
-        self.btn_toggle.setText("Start Engine")
+        self.btn_toggle.setText("Start")
         self.btn_toggle.setProperty("class", "btn-primary")
 
         self.lbl_status.setStyle(self.lbl_status.style())

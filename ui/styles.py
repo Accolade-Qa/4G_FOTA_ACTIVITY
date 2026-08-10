@@ -223,3 +223,230 @@ QScrollBar::handle:vertical:hover {
     background: #94a3b8;
 }
 """
+
+DARK_THEME_QSS = """
+QMainWindow {
+    background-color: #0f172a;
+}
+
+QWidget {
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    font-size: 9pt;
+    color: #f8fafc;
+}
+
+/* Header & Telemetry Card Containers */
+QFrame.header-bar {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px 14px;
+}
+
+QFrame.telemetry-bar {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px 14px;
+}
+
+QLabel.app-title {
+    font-weight: 700;
+    font-size: 11pt;
+    color: #38bdf8;
+    letter-spacing: 0.5px;
+}
+
+/* Telemetry Stats */
+QLabel.stat-label {
+    font-size: 8pt;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+QLabel.stat-value {
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: #60a5fa;
+    border: none;
+    background-color: transparent;
+}
+
+/* Dark Theme Buttons */
+QPushButton {
+    background-color: #334155;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 9pt;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: #475569;
+    color: #ffffff;
+}
+
+QPushButton.btn-primary {
+    background-color: #2563eb;
+    color: #ffffff;
+    border: none;
+}
+
+QPushButton.btn-primary:hover {
+    background-color: #3b82f6;
+}
+
+QPushButton.btn-danger {
+    background-color: #dc2626;
+    color: #ffffff;
+    border: none;
+}
+
+QPushButton.btn-danger:hover {
+    background-color: #ef4444;
+}
+
+QPushButton.btn-icon {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 10pt;
+    font-weight: bold;
+}
+
+QPushButton.btn-icon:hover {
+    background-color: #334155;
+    color: #38bdf8;
+    border-color: #38bdf8;
+}
+
+QPushButton.btn-secondary {
+    background-color: #1e293b;
+    color: #94a3b8;
+    border: 1px solid #475569;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 8.5pt;
+    font-weight: 600;
+}
+
+QPushButton.btn-secondary:hover {
+    background-color: #334155;
+    color: #f8fafc;
+    border-color: #64748b;
+}
+
+/* Status Badges */
+QLabel.status-online {
+    color: #4ade80;
+    font-weight: 700;
+    font-size: 9pt;
+}
+
+QLabel.status-offline {
+    color: #f87171;
+    font-weight: 700;
+    font-size: 9pt;
+}
+
+/* Inputs & Combo Box */
+QComboBox, QLineEdit {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 9pt;
+}
+
+QComboBox:hover, QLineEdit:hover {
+    border-color: #38bdf8;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #1e293b;
+    color: #f8fafc;
+    selection-background-color: #334155;
+    selection-color: #38bdf8;
+}
+
+QComboBox:disabled, QLineEdit:disabled {
+    background-color: #0f172a;
+    color: #64748b;
+    border-color: #334155;
+}
+
+/* Slim Dark Progress Bar */
+QProgressBar {
+    background-color: #1e293b;
+    border: 1px solid #475569;
+    border-radius: 4px;
+    height: 8px;
+    text-align: right;
+}
+
+QProgressBar::chunk {
+    background-color: #38bdf8;
+    border-radius: 3px;
+}
+
+/* Dark Monospace Terminal Console */
+QPlainTextEdit.light-console {
+    background-color: #020617;
+    color: #38bdf8;
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 9.5pt;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px;
+}
+
+/* Toast / Snackbar Notification */
+QFrame.snackbar {
+    background-color: #1e293b;
+    border: 1px solid #475569;
+    border-radius: 8px;
+    padding: 8px 14px;
+}
+
+QLabel.snackbar-text {
+    color: #f8fafc;
+    font-weight: 600;
+    font-size: 9pt;
+}
+
+QPushButton.snackbar-close {
+    background-color: transparent;
+    color: #94a3b8;
+    border: none;
+    font-weight: 700;
+    font-size: 11pt;
+    padding: 0px 4px;
+}
+
+QPushButton.snackbar-close:hover {
+    color: #ffffff;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    background: #0f172a;
+    width: 8px;
+}
+
+QScrollBar::handle:vertical {
+    background: #334155;
+    border-radius: 4px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #475569;
+}
+"""

@@ -318,3 +318,34 @@ class FotaApiClient:
             err_msg = f"REST POST connection error: {err}."
             logger.warning(err_msg)
             return True, err_msg
+
+    def get_fota_device_history(self, imei: str) -> List[Dict[str, Any]]:
+        """Fetch FOTA execution history array for given IMEI from API (getFOTADevicesHistory?imei={imei})."""
+        if not imei:
+            return []
+        if not self.token:
+            self.authenticate()
+
+        url_template = self.config.fetch_fota_history_url
+        url = url_template.format(imei=imei)
+
+        active_token = self.token or self.config.user_id
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {active_token}",
+            "token": active_token or "",
+        }
+
+        try:
+            logger.info("Fetching FOTA device history from API for IMEI %s (%s)", imei, url)
+            res = self.session.get(url, headers=headers, timeout=6)
+            if res.status_code == 200:
+                res_json = res.json()
+                data = res_json.get("data", [])
+                if isinstance(data, list):
+                    logger.info("Retrieved %d FOTA history records for IMEI %s.", len(data), imei)
+                    return data
+        except Exception as err:
+            logger.warning("Error fetching FOTA device history for IMEI %s: %s", imei, err)
+        return []

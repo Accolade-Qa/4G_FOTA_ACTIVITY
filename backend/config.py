@@ -96,6 +96,13 @@ class Config:
         )
 
     @property
+    def fetch_fota_history_url(self) -> str:
+        return os.getenv(
+            "FETCH_FOTA_HISTORY_URL",
+            "https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/fota/getFOTADevicesHistory?imei={imei}"
+        )
+
+    @property
     def user_id(self) -> str:
         return os.getenv("USER_ID", "64116e41c56760941baea6ac")
 
