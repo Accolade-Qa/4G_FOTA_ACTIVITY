@@ -65,31 +65,51 @@ class FirmwareResolver:
     def validate_version_exists(self, state_name: str, version: str) -> bool:
         """Check whether current device firmware version exists in state configuration."""
         available = self.get_state_versions(state_name)
-        if not version or not available:
+        if not available:
+            return False
+        # If single object present for state, consider valid
+        if len(available) == 1:
+            return True
+        if not version:
             return False
         clean_v = str(version).strip()
         for v in available:
-            if v == clean_v or v.startswith(clean_v) or clean_v.startswith(v):
+            if v == clean_v or v.startswith(clean_v) or clean_v.startswith(v) or v in clean_v or clean_v in v:
                 return True
         return False
 
     def resolve_next_version(self, state_name: str, current_version: str) -> Optional[str]:
         """Determine the next firmware version to upgrade to.
 
-        STRICT VALIDATION BARRIER:
-        Current version MUST exist in servers.json for state_name.
-        Selects the next 'version' field from servers.json (NOT expectedFirmwareVersion).
+        - Single Object Logic: If state JSON contains ONLY 1 object, start FOTA on that same version/expected target.
+        - Multi-Object Logic: Sequence through objects by index as proposed by earlier logic.
         """
         objects = self.get_state_firmware_objects(state_name)
         versions = [str(obj.get("version", "")).strip() for obj in objects if obj.get("version")]
 
-        if not versions:
+        if not objects:
             logger.warning("No firmware versions configured in servers.json for state '%s'", state_name)
             return None
 
+        # 1. Single Object Check: If state has only 1 object, start FOTA on that same version/expected target!
+        if len(objects) == 1:
+            obj = objects[0]
+            v_ver = str(obj.get("version", "")).strip()
+            v_exp = str(obj.get("expectedFirmwareVersion", "")).strip()
+            clean_curr = str(current_version).strip()
+
+            target = v_ver
+            if clean_curr and v_ver and (clean_curr == v_ver or clean_curr.startswith(v_ver) or v_ver.startswith(clean_curr)):
+                if v_exp and v_exp != v_ver:
+                    target = v_exp
+
+            if target:
+                logger.info("Single object found in state '%s'. Starting FOTA on target version from json: %s", state_name, target)
+                return target
+
         clean_curr = str(current_version).strip()
 
-        # 1. Exact Match on 'version' field
+        # 2. Multi-Object Logic: Exact Match on 'version' field
         for idx, obj in enumerate(objects):
             ver = str(obj.get("version", "")).strip()
             if ver == clean_curr:
@@ -103,7 +123,7 @@ class FirmwareResolver:
                                 clean_curr, state_name)
                     return None
 
-        # 2. Fuzzy / Prefix Match on 'version' field (e.g. '5.2.9 5th IP' vs '5.2.9')
+        # 3. Multi-Object Logic: Fuzzy / Prefix Match on 'version' field
         for idx, obj in enumerate(objects):
             ver = str(obj.get("version", "")).strip()
             if ver and (ver == clean_curr or ver.startswith(clean_curr) or clean_curr.startswith(ver) or ver in clean_curr or clean_curr in ver):
@@ -117,18 +137,18 @@ class FirmwareResolver:
                                 clean_curr, ver, state_name)
                     return None
 
-        # 3. STRICT Barrier: Do NOT trigger FOTA if version is not in servers.json
+        # 4. STRICT Barrier: Do NOT trigger FOTA if version is not in servers.json
         logger.warning("VALIDATION BARRIER: Current device version '%s' is NOT listed under state '%s' in servers.json. FOTA process blocked.",
                        clean_curr, state_name)
         return None
 
     def resolve_next_version_after_aborted(self, state_name: str, current_version: str, aborted_target_version: str) -> Optional[str]:
-        """Resolve next step firmware version when previous attempt for aborted_target_version was aborted.
-        Selects the next 'version' field from servers.json (NOT expectedFirmwareVersion).
-        """
+        """Resolve next step firmware version when previous attempt for aborted_target_version was aborted."""
         objects = self.get_state_firmware_objects(state_name)
-        versions = [str(obj.get("version", "")).strip() for obj in objects if obj.get("version")]
+        if len(objects) == 1:
+            return self.resolve_next_version(state_name, current_version)
 
+        versions = [str(obj.get("version", "")).strip() for obj in objects if obj.get("version")]
         if not versions:
             return None
 
@@ -147,5 +167,4 @@ class FirmwareResolver:
             logger.info("Previous FOTA target '%s' was aborted for state '%s'. Resolved next step version from json: %s",
                         clean_aborted, state_name, next_ver)
             return next_ver
-
-        return self.resolve_next_version(state_name, current_version)
+        return None

@@ -45,14 +45,17 @@ class SerialWorker(QThread):
         return [p.device for p in ports]
 
     def stop(self) -> None:
-        """Signal thread to stop reading and close port."""
+        """Signal thread to stop reading and close port cleanly without freezing main UI."""
         self._running = False
-        if self._serial_inst and self._serial_inst.is_open:
+        if self._serial_inst:
             try:
-                self._serial_inst.close()
+                if self._serial_inst.is_open:
+                    self._serial_inst.close()
             except Exception as e:
                 logger.warning("Error closing serial port: %s", e)
-        self.wait(2000)
+        self.quit()
+        if self.isRunning():
+            self.wait(500)
 
     def reset_login_capture(self) -> None:
         """Reset captured login packet flag and accumulator for new upgrade cycle."""

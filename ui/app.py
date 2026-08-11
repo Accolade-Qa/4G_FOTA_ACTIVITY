@@ -389,7 +389,6 @@ class MinimalFotaWindow(QMainWindow):
         self.lbl_iccid.setText("---")
         self.lbl_state.setText(self.combo_states.currentText() or "DO NOT DELETE")
         self.lbl_ver.setText("---")
-        self.lbl_sleep.setText("---")
         self._last_toast_key = None
         
         if self.orchestrator:
