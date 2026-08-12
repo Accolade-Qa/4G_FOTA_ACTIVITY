@@ -98,3 +98,11 @@ FOTA_ACTIVITY/
 - **Adaptive Polling Worker**: Polls server status every 10 minutes when `< 95%` progress, and every 2 minutes when `>= 95%` up to completion.
 - **Cyber-Dark Theme Engine**: Real-time theme switching between Light and Cyber-Dark modes.
 - **Silent Sleep / Soft Shutdown Monitoring**: Detects device sleep states and displays Snackbar toast alerts.
+
+
+# Build Executable (PyInstaller)
+Before building, ensure `input` directory exists by running `python main.py` or creating `input/servers.json`.
+
+```bash
+pyinstaller --noconfirm --noconsole --onefile --icon="assets/logo.ico" --name "Continuos_Fota" --add-data ".env;." --add-data "input;input" --add-data "assets;assets" --hidden-import PyQt6 --hidden-import serial --hidden-import serial.tools.list_ports --hidden-import requests --hidden-import urllib3 --hidden-import dotenv main.py
+```

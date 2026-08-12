@@ -26,6 +26,8 @@ dist/
 ui/backend/
 ui/runtime/
 ui/build/
+*.spec
+*.exe
 
 # === Secrets & Environment ===
 .env

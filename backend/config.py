@@ -5,6 +5,7 @@ Built following PEP 8 standards and explicit type hinting.
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Dict, Any
 
@@ -31,8 +32,24 @@ class Config:
 
     def __init__(self, base_dir: Path | None = None) -> None:
         self.base_dir = base_dir or get_base_dir()
+
+        # Locate .env across PyInstaller executable directory, _MEIPASS, and workspace root
+        env_candidates = []
+        if getattr(sys, "frozen", False):
+            env_candidates.append(Path(sys.executable).resolve().parent / ".env")
+            if hasattr(sys, "_MEIPASS"):
+                env_candidates.append(Path(sys._MEIPASS) / ".env")
+        env_candidates.append(self.base_dir / ".env")
+        env_candidates.append(Path.cwd() / ".env")
+
         self.env_path = self.base_dir / ".env"
-        load_dotenv(self.env_path)
+        for candidate in env_candidates:
+            if candidate.exists() and candidate.stat().st_size > 0:
+                self.env_path = candidate
+                load_dotenv(candidate)
+                break
+        else:
+            load_dotenv(self.env_path)
 
         # Paths
         self.input_dir = self.base_dir / "input"
