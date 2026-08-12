@@ -10,11 +10,17 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Import path resolver for PyInstaller bundle support
+from backend.path_resolver import get_base_dir
+
+# Get the correct base directory (handles both exe and source execution)
+BASE_DIR = get_base_dir()
+
 # Suppress legacy Windows DirectWrite bitmap font loading warnings (8514oem/Fixedsys)
 os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts.warning=false;qt.qpa.fonts.debug=false"
 
 # Setup logging to write terminal logs to logs/fota_activity.log
-logs_dir = REPO_ROOT / "logs"
+logs_dir = BASE_DIR / "logs"
 logs_dir.mkdir(parents=True, exist_ok=True)
 log_file = logs_dir / "fota_activity.log"
 

@@ -47,7 +47,7 @@ def save_active_fota_json(imei: str, uin: str, target_ver: str, state_name: str,
     """Save/update active FOTA status information into results/active_fota.json."""
     try:
         out_dir = Path("results")
-        out_dir.mkdir(exist_ok=True)
+        out_dir.mkdir(parents=True, exist_ok=True)
         out_file = out_dir / "active_fota.json"
 
         data = {
@@ -91,20 +91,28 @@ class FotaAsyncTriggerWorker(QThread):
             history = self.orchestrator.api_client.get_fota_device_history(self.login_info.imei)
             first_item = history[0] if (history and isinstance(history, list) and len(history) > 0) else {}
 
-            # 2. Check if a FOTA session is ALREADY ACTIVE on the backend server
-            if first_item and is_active_fota_session(first_item):
-                target_ver = first_item.get("targetFirmwareVersion") or ""
+            # 2. If previous FOTA history record exists, scan and write audit/json files
+            if first_item:
+                target_ver = first_item.get("targetFirmwareVersion") or first_item.get("targetVersion") or ""
                 progress = float(first_item.get("progress") or 0.0)
                 ping_cnt = first_item.get("pingCount", 0) or 0
                 attempt_cnt = first_item.get("attemptCount", 0) or 0
-                status_str = first_item.get("deviceFotaStatus") or "In-Progress"
+                status_str = first_item.get("deviceFotaStatus") or "Scanned"
 
-                msg = (f"🔄 Active FOTA already running on server for IMEI {self.login_info.imei} "
-                       f"(Target: {target_ver}, Status: {status_str}, Progress: {progress}%, Pings: {ping_cnt}, Attempts: {attempt_cnt}/3). "
-                       f"Skipping new API trigger & re-attaching monitoring.")
+                is_aborted = first_item.get("isAborted", False) or bool(first_item.get("abortReason"))
+                is_completed = first_item.get("deviceFotaCompletionStatus", False) or progress >= 100.0
+                is_active = is_active_fota_session(first_item)
+
+                msg = (f"📋 Scanned previous FOTA history for IMEI {self.login_info.imei}: "
+                       f"Target: '{target_ver}', Status: '{status_str}', Progress: {progress}%, Pings: {ping_cnt}, Attempts: {attempt_cnt}/3.")
                 logger.info(msg)
-                self.finished_signal.emit(True, target_ver, "ALREADY_ACTIVE", msg, first_item)
-                return
+
+                # Emit scanned history item to main thread so active_fota.json, fota_results.csv, and fota_results.json are written immediately!
+                self.finished_signal.emit(True, target_ver, "SCANNED_HISTORY", msg, first_item)
+
+                # If session is ALREADY ACTIVE, stop here and let poller worker monitor
+                if is_active:
+                    return
 
             next_ver = None
 
@@ -345,14 +353,65 @@ class FotaOrchestrator(QObject):
     def _on_trigger_finished(self, success: bool, target_ver: str, api_msg: str, status_msg: str, raw_item: dict) -> None:
         """Callback executed on Qt main thread when async trigger worker completes."""
         self.status_signal.emit(status_msg)
-        if success and target_ver:
+
+        if success and raw_item and api_msg == "SCANNED_HISTORY":
+            if self.current_device:
+                # 1. Always save active FOTA info to results/active_fota.json
+                save_active_fota_json(
+                    self.current_device.imei,
+                    self.current_device.uin,
+                    target_ver or raw_item.get("targetFirmwareVersion", ""),
+                    self.current_device.state,
+                    raw_item
+                )
+
+                # Determine audit status from raw_item
+                is_aborted = raw_item.get("isAborted", False) or bool(raw_item.get("abortReason"))
+                is_completed = raw_item.get("deviceFotaCompletionStatus", False) or float(raw_item.get("progress") or 0.0) >= 100.0
+
+                if is_completed:
+                    audit_status = "COMPLETED"
+                elif is_aborted:
+                    audit_status = "ABORTED"
+                elif is_active_fota_session(raw_item):
+                    audit_status = "IN_PROGRESS"
+                else:
+                    audit_status = str(raw_item.get("deviceFotaStatus", "SCANNED_HISTORY")).upper()
+
+                # 2. Always write audit entry to results/fota_results.csv and results/fota_results.json
+                try:
+                    init_v = raw_item.get("firmwareVersion") or (self.current_device.version if self.current_device else "")
+                    tgt_v = target_ver or raw_item.get("targetFirmwareVersion") or ""
+                    self._write_audit(self.current_device.uin, init_v, tgt_v, audit_status, status_msg)
+                except Exception as err:
+                    logger.error("Failed writing audit entry for scanned history: %s", err)
+
+                # 3. If session is ACTIVE, re-attach poller worker to track it to 100%
+                if is_active_fota_session(raw_item):
+                    self.target_version = target_ver or raw_item.get("targetFirmwareVersion", "")
+                    self.is_upgrading = True
+                    self.extension_mgr.trigger_fota_started(self.current_device.uin, self.target_version)
+
+                    if not self.poller_worker or not self.poller_worker.isRunning():
+                        self.poller_worker = FotaApiPollerWorker(self, self.current_device.imei)
+                        self.poller_worker.poll_update_signal.connect(self._on_poller_update)
+                        self.poller_worker.poll_finished_signal.connect(self._on_poller_finished)
+                        self.poller_worker.start()
+
+        elif success and target_ver:
             self.target_version = target_ver
             self.is_upgrading = True
 
-            # Save active FOTA status into results/active_fota.json
+            # Save active FOTA status into results/active_fota.json and CSV/JSON audit log
             if self.current_device:
                 save_active_fota_json(self.current_device.imei, self.current_device.uin, target_ver, self.current_device.state, raw_item)
                 self.extension_mgr.trigger_fota_started(self.current_device.uin, target_ver)
+
+                # Write initial audit entry for IN_PROGRESS status
+                try:
+                    self._write_audit(self.current_device.uin, self.current_device.version, target_ver, "IN_PROGRESS", status_msg)
+                except Exception as err:
+                    logger.error("Failed to write initial audit entry: %s", err)
 
                 # Launch adaptive API poller worker thread (10min <95%, 2min >=95%)
                 if not self.poller_worker or not self.poller_worker.isRunning():

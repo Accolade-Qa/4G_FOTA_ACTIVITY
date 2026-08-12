@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
+from backend.path_resolver import get_base_dir
+
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -28,7 +30,7 @@ class Config:
     """Central configuration store reading from .env and filesystem paths."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self.base_dir = base_dir or Path.cwd()
+        self.base_dir = base_dir or get_base_dir()
         self.env_path = self.base_dir / ".env"
         load_dotenv(self.env_path)
 
@@ -42,6 +44,7 @@ class Config:
         self.audit_csv_path = self.results_dir / "fota_audit.csv"
         self.login_json_path = self.results_dir / "login_packets.json"
         self._ensure_directories()
+
 
     @property
     def audit_log_path(self) -> Path:

@@ -25,15 +25,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-import os
-import sys
-from pathlib import Path
-
 # Add repo root to Python path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from backend.path_resolver import get_base_dir
 from backend.config import Config
 from backend.models import LoginPacketInfo
 from backend.orchestrator import FotaOrchestrator
@@ -53,6 +50,7 @@ logger = logging.getLogger(__name__)
 class MinimalFotaWindow(QMainWindow):
     """Ultra-Minimalist Window with Light/Dark Theme Support & Automated Reboot/CIP2 QA Verification."""
 
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Continuous FOTA Utility")
@@ -60,7 +58,7 @@ class MinimalFotaWindow(QMainWindow):
         self.is_dark_theme = False
         self.setStyleSheet(LIGHT_THEME_QSS)
 
-        self.config = Config(REPO_ROOT)
+        self.config = Config(get_base_dir())
         self.orchestrator = FotaOrchestrator(self.config)
         self.serial_worker: Optional[SerialWorker] = None
         self.api_sync_worker: Optional[ApiSyncWorker] = None
