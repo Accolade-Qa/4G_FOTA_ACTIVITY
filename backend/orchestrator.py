@@ -35,8 +35,18 @@ def is_active_fota_session(item: dict) -> bool:
         return False
 
     added_to_batch = item.get("addedToBatch") is True
-    is_aborted = item.get("isAborted") is True
-    is_completed = item.get("deviceFotaCompletionStatus") is True
+    is_aborted = item.get("isAborted") is True or bool(item.get("abortReason"))
+    
+    current_fw = str(item.get("currentFirmwareVersion") or "").strip()
+    target_fw = str(item.get("targetFirmwareVersion") or item.get("targetVersion") or "").strip()
+    match_completed = bool(current_fw and target_fw and current_fw == target_fw)
+
+    is_completed = (
+        item.get("deviceFotaCompletionStatus") is True
+        or str(item.get("deviceFotaStatus", "")).strip().lower() == "completed"
+        or match_completed
+        or float(item.get("progress") or 0.0) >= 100.0
+    )
     attempt_count = item.get("attemptCount", 0) or 0
 
     # Active if added to batch, not aborted, not completed, and attempt count < 3
@@ -91,41 +101,54 @@ class FotaAsyncTriggerWorker(QThread):
             history = self.orchestrator.api_client.get_fota_device_history(self.login_info.imei)
             first_item = history[0] if (history and isinstance(history, list) and len(history) > 0) else {}
 
-            # 2. If previous FOTA history record exists, scan and write audit/json files
+            # 2. Evaluate the 3 explicit server statuses: Aborted, Pending, Completed
+            next_ver = None
             if first_item:
                 target_ver = first_item.get("targetFirmwareVersion") or first_item.get("targetVersion") or ""
+                current_fw_ver = str(first_item.get("currentFirmwareVersion") or "").strip()
+                match_completed = bool(current_fw_ver and target_ver and current_fw_ver == target_ver)
+
                 progress = float(first_item.get("progress") or 0.0)
                 ping_cnt = first_item.get("pingCount", 0) or 0
                 attempt_cnt = first_item.get("attemptCount", 0) or 0
-                status_str = first_item.get("deviceFotaStatus") or "Scanned"
+                raw_status = str(first_item.get("deviceFotaStatus") or "").strip()
+                status_lower = raw_status.lower()
 
-                is_aborted = first_item.get("isAborted", False) or bool(first_item.get("abortReason"))
-                is_completed = first_item.get("deviceFotaCompletionStatus", False) or progress >= 100.0
-                is_active = is_active_fota_session(first_item)
+                is_aborted = first_item.get("isAborted", False) or bool(first_item.get("abortReason")) or (status_lower == "aborted")
+                is_completed = (
+                    first_item.get("deviceFotaCompletionStatus", False)
+                    or (status_lower == "completed")
+                    or match_completed
+                    or (progress >= 100.0)
+                )
+                is_pending_active = is_active_fota_session(first_item) or (status_lower in ("pending", "in-progress"))
 
-                msg = (f"📋 Scanned previous FOTA history for IMEI {self.login_info.imei}: "
-                       f"Target: '{target_ver}', Status: '{status_str}', Progress: {progress}%, Pings: {ping_cnt}, Attempts: {attempt_cnt}/3.")
+                display_status = "Completed" if is_completed else ("Aborted" if is_aborted else "Pending")
+                msg = (f"📋 Scanned FOTA History for IMEI {self.login_info.imei}: "
+                       f"Status: '{raw_status or display_status}', Target: '{target_ver}', Progress: {progress:.2f}%, Pings: {ping_cnt}, Attempts: {attempt_cnt}/3.")
                 logger.info(msg)
 
                 # Emit scanned history item to main thread so active_fota.json, fota_results.csv, and fota_results.json are written immediately!
                 self.finished_signal.emit(True, target_ver, "SCANNED_HISTORY", msg, first_item)
 
-                # If session is ALREADY ACTIVE, stop here and let poller worker monitor
-                if is_active:
+                # --- STATUS 1: PENDING / IN-PROGRESS ---
+                if is_pending_active and not is_aborted and not is_completed:
+                    logger.info("FOTA status is PENDING for IMEI %s. Re-attaching monitoring without triggering new API call...", self.login_info.imei)
                     return
 
-            next_ver = None
+                # --- STATUS 2: ABORTED ---
+                if is_aborted:
+                    abort_reason = first_item.get("abortReason") or "Aborted on server"
+                    logger.warning("FOTA status is ABORTED ('%s') for IMEI %s. Resolving next step version after aborted target '%s'...",
+                                   abort_reason, self.login_info.imei, target_ver)
+                    next_ver = self.orchestrator.resolver.resolve_next_version_after_aborted(self.device_state, self.login_info.version, target_ver)
 
-            # 3. Check if previous FOTA was aborted
-            if first_item:
-                is_aborted = first_item.get("isAborted", False)
-                abort_reason = first_item.get("abortReason") or ""
-                aborted_target = first_item.get("targetFirmwareVersion") or ""
-
-                if is_aborted or abort_reason:
-                    logger.warning("Background FOTA History check for IMEI %s shows ABORTED ('%s'). Resolving next step version...",
-                                   self.login_info.imei, abort_reason)
-                    next_ver = self.orchestrator.resolver.resolve_next_version_after_aborted(self.device_state, self.login_info.version, aborted_target)
+                # --- STATUS 3: COMPLETED ---
+                if is_completed:
+                    base_version = target_ver or self.login_info.version
+                    logger.info("FOTA status is COMPLETED for IMEI %s. Resolving next step upgrade version from base target '%s'...",
+                                self.login_info.imei, base_version)
+                    next_ver = self.orchestrator.resolver.resolve_next_version(self.device_state, base_version)
 
             if not next_ver:
                 next_ver = self.orchestrator.resolver.resolve_next_version(self.device_state, self.login_info.version)
@@ -192,7 +215,11 @@ class FotaApiPollerWorker(QThread):
                     abort_reason = item.get("abortReason") or ""
                     attempt_count = item.get("attemptCount", 0) or 0
                     ping_count = item.get("pingCount", 0) or 0
-                    is_completed = item.get("deviceFotaCompletionStatus", False)
+                    is_completed = (
+                        item.get("deviceFotaCompletionStatus", False) is True
+                        or str(item.get("deviceFotaStatus", "")).strip().lower() == "completed"
+                        or progress >= 100.0
+                    )
 
                     # 1. Check if Aborted
                     if is_aborted or abort_reason:
