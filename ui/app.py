@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -20,7 +20,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QProgressBar,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -39,8 +41,11 @@ from backend.message_parser import MessageParser
 from ui.styles import LIGHT_THEME_QSS, DARK_THEME_QSS
 from ui.widgets import (
     ApiSyncWorker,
+    AuditHistoryTableWidget,
     CommandHistoryLineEdit,
+    ConsoleTabWidget,
     InteractiveTerminalConsole,
+    ReportingAnalyticsTabWidget,
     SnackbarWidget,
 )
 
@@ -81,13 +86,13 @@ class MinimalFotaWindow(QMainWindow):
         self.api_sync_worker.start()
 
     def _init_ui(self) -> None:
-        """Build clean light/dark interface layout."""
+        """Build clean 10/10 Industry Standard interface layout with tabs, progress bar, shortcuts, and audit viewer."""
         root = QWidget(self)
         self.setCentralWidget(root)
 
         layout = QVBoxLayout(root)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         # 1. Top Header Bar (Title + Online Status + Target State Dropdown + Port Select + Theme Toggle + Refresh + Start/Stop Engine)
         hdr = QFrame()
@@ -113,13 +118,13 @@ class MinimalFotaWindow(QMainWindow):
         self.btn_refresh = QPushButton("↻")
         self.btn_refresh.setProperty("class", "btn-icon")
         self.btn_refresh.setFixedWidth(32)
-        self.btn_refresh.setToolTip("Refresh COM ports")
+        self.btn_refresh.setToolTip("Refresh COM ports (Ctrl+R)")
         self.btn_refresh.clicked.connect(self._refresh_ports)
 
         self.btn_theme = QPushButton("🌙")
         self.btn_theme.setProperty("class", "btn-icon")
         self.btn_theme.setFixedWidth(32)
-        self.btn_theme.setToolTip("Toggle Dark / Light Theme")
+        self.btn_theme.setToolTip("Toggle Dark / Light Theme (Ctrl+T)")
         self.btn_theme.clicked.connect(self._toggle_theme)
 
         self.btn_toggle = QPushButton("Start")
@@ -139,7 +144,16 @@ class MinimalFotaWindow(QMainWindow):
 
         layout.addWidget(hdr)
 
-        # 2. Captured Telemetry Bar (IMEI, UIN, VIN, ICCID, State, Firmware + Clear Info Button)
+        # 2. Main Tab Widget Architecture
+        self.tab_widget = QTabWidget()
+
+        # --- TAB 1: Live Terminal Console & Engine Control ---
+        tab_terminal = QWidget()
+        term_layout = QVBoxLayout(tab_terminal)
+        term_layout.setContentsMargins(8, 8, 8, 8)
+        term_layout.setSpacing(8)
+
+        # Captured Telemetry Bar
         tel_bar = QFrame()
         tel_bar.setProperty("class", "telemetry-bar")
         tel_box = QHBoxLayout(tel_bar)
@@ -160,19 +174,39 @@ class MinimalFotaWindow(QMainWindow):
         btn_clear_info.clicked.connect(self._clear_device_telemetry)
         tel_box.addWidget(btn_clear_info, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        layout.addWidget(tel_bar)
+        term_layout.addWidget(tel_bar)
 
-        # 3. Status Line (Clean, padded message banner)
-        self.lbl_msg = QLabel("Ready.")
-        self.lbl_msg.setStyleSheet("color: #2563eb; font-size: 9pt; font-weight: 500; padding: 2px 4px;")
+        # Visual Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 10000)  # Enables 2-decimal places (0-100.00%)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("FOTA Download Progress: 0.00%")
+        term_layout.addWidget(self.progress_bar)
+
+        # Enterprise Status Banner Card
+        self.frame_msg_card = QFrame()
+        self.frame_msg_card.setProperty("class", "status-banner status-banner-info")
+        msg_box = QHBoxLayout(self.frame_msg_card)
+        msg_box.setContentsMargins(10, 4, 10, 4)
+        msg_box.setSpacing(8)
+
+        self.lbl_stage_badge = QLabel("READY")
+        self.lbl_stage_badge.setStyleSheet("font-weight: 800; font-size: 8.5pt; color: #2563eb;")
+
+        self.lbl_msg = QLabel("Connect device serial COM port and click Start Engine to initiate FOTA monitoring.")
+        self.lbl_msg.setStyleSheet("font-size: 9pt; font-weight: 600;")
         self.lbl_msg.setWordWrap(True)
-        layout.addWidget(self.lbl_msg)
 
-        # 4. Interactive Log Terminal Console
+        msg_box.addWidget(self.lbl_stage_badge)
+        msg_box.addWidget(QLabel("|"))
+        msg_box.addWidget(self.lbl_msg, stretch=1)
+        term_layout.addWidget(self.frame_msg_card)
+
+        # Interactive Log Terminal Console
         self.console = InteractiveTerminalConsole()
-        layout.addWidget(self.console, stretch=1)
+        term_layout.addWidget(self.console, stretch=1)
 
-        # 5. Command Input Bar (Send Serial AT Commands with Up/Down Arrow History)
+        # Command Input Bar
         cmd_box = QHBoxLayout()
         self.input_cmd = CommandHistoryLineEdit()
         self.input_cmd.setPlaceholderText("Type serial/AT command and press Enter (e.g. *SET#CRST#1#)... Use Up/Down arrow for history.")
@@ -182,10 +216,57 @@ class MinimalFotaWindow(QMainWindow):
         self.btn_send_cmd.setFixedWidth(120)
         self.btn_send_cmd.clicked.connect(self._on_send_command)
 
+        self.btn_clear_log = QPushButton("Clear Log")
+        self.btn_clear_log.setProperty("class", "btn-secondary")
+        self.btn_clear_log.setFixedWidth(90)
+        self.btn_clear_log.setToolTip("Clear terminal console (Ctrl+K / Ctrl+L)")
+        self.btn_clear_log.clicked.connect(self.console.clear)
+
         cmd_box.addWidget(self.input_cmd, stretch=1)
         cmd_box.addWidget(self.btn_send_cmd)
+        cmd_box.addWidget(self.btn_clear_log)
+        term_layout.addLayout(cmd_box)
 
-        layout.addLayout(cmd_box)
+        self.tab_widget.addTab(tab_terminal, "🖥️ Live Serial Console & Control")
+
+        # --- TAB 2: Execution Audit Log History ---
+        self.audit_tab = AuditHistoryTableWidget(self.config)
+        self.tab_widget.addTab(self.audit_tab, "📊 Audit Log History")
+
+        # --- TAB 3: Executive Analytics & Deep Insights ---
+        self.analytics_tab = ReportingAnalyticsTabWidget(self.config)
+        self.tab_widget.addTab(self.analytics_tab, "📈 Analytics & Reporting")
+
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+        layout.addWidget(self.tab_widget, stretch=1)
+
+        # Global Keyboard Shortcuts
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self) -> None:
+        """Setup keyboard shortcuts for fast engineering workflows."""
+        sc_clear = QShortcut(QKeySequence("Ctrl+K"), self)
+        sc_clear.activated.connect(self.console.clear)
+
+        sc_clear2 = QShortcut(QKeySequence("Ctrl+L"), self)
+        sc_clear2.activated.connect(self.console.clear)
+
+        sc_refresh = QShortcut(QKeySequence("Ctrl+R"), self)
+        sc_refresh.activated.connect(self._refresh_ports)
+
+        sc_theme = QShortcut(QKeySequence("Ctrl+T"), self)
+        sc_theme.activated.connect(self._toggle_theme)
+
+        sc_esc = QShortcut(QKeySequence("Esc"), self)
+        sc_esc.activated.connect(self.input_cmd.clear)
+
+    @pyqtSlot(int)
+    def _on_tab_changed(self, idx: int) -> None:
+        """Refresh audit table or analytics dashboard when switching tabs."""
+        if idx == 1 and hasattr(self, "audit_tab"):
+            self.audit_tab.load_history()
+        elif idx == 2 and hasattr(self, "analytics_tab"):
+            self.analytics_tab.load_analytics()
 
     def _add_stat(self, box: QHBoxLayout, label: str, default: str) -> QLabel:
         """Helper for adding compact inline telemetry stats."""
@@ -202,15 +283,54 @@ class MinimalFotaWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         """Connect orchestrator signals."""
-        self.orchestrator.status_signal.connect(self.lbl_msg.setText)
+        self.orchestrator.status_signal.connect(self._on_orchestrator_status_update)
         self.orchestrator.device_info_signal.connect(self._on_device_info)
         self.orchestrator.progress_signal.connect(self._on_progress_update)
         self.orchestrator.request_command_signal.connect(self._auto_execute_command)
 
+    @pyqtSlot(str)
+    def _on_orchestrator_status_update(self, text: str) -> None:
+        """Parse orchestrator status strings into dynamic, concise stage badges and cards."""
+        if not text:
+            return
+
+        t_upper = text.upper()
+        if "DOWNLOADING" in t_upper or "IN-PROGRESS" in t_upper or "PROGRESS:" in t_upper:
+            self._update_status_card("⚡ IN-PROGRESS", text, level="info")
+        elif "COMPLETED" in t_upper or "ACCEPTED" in t_upper or "SUCCESS" in t_upper:
+            self._update_status_card("🎉 COMPLETED", text, level="success")
+        elif "ABORTED" in t_upper or "FAILED" in t_upper or "CANCELLED" in t_upper:
+            self._update_status_card("⛔ ABORTED", text, level="danger")
+        elif "BLOCKED" in t_upper or "NOT FOUND" in t_upper or "WARNING" in t_upper:
+            self._update_status_card("⚠️ WARNING", text, level="warning")
+        elif "SCANNING" in t_upper or "FETCHING" in t_upper:
+            self._update_status_card("📋 SCANNING", text, level="info")
+        else:
+            self._update_status_card("ℹ️ STATUS", text, level="info")
+
+    def _update_status_card(self, badge: str, message: str, level: str = "info") -> None:
+        """Update status card badge text, message detail, and QSS class dynamically."""
+        self.lbl_stage_badge.setText(badge)
+        self.lbl_msg.setText(message)
+
+        color_map = {
+            "info": "#2563eb",
+            "success": "#16a34a",
+            "warning": "#d97706",
+            "danger": "#dc2626"
+        }
+        badge_color = color_map.get(level, "#2563eb")
+        self.lbl_stage_badge.setStyleSheet(f"font-weight: 800; font-size: 8.5pt; color: {badge_color};")
+        self.frame_msg_card.setProperty("class", f"status-banner status-banner-{level}")
+        self.frame_msg_card.setStyle(self.frame_msg_card.style())
+
     @pyqtSlot(float)
     def _on_progress_update(self, val: float) -> None:
-        """Handle download progress update with 2-decimal precision (e.g. 2.95%)."""
-        self.lbl_msg.setText(f"FOTA Downloading: {val:.2f}%")
+        """Handle download progress update with 2-decimal precision (e.g. 45.20%)."""
+        val_clean = max(0.0, min(100.0, float(val)))
+        self.progress_bar.setValue(int(val_clean * 100))
+        self.progress_bar.setFormat(f"FOTA Download Progress: {val_clean:.2f}%")
+        self._update_status_card("⚡ IN-PROGRESS", f"FOTA Downloading: {val_clean:.2f}%", level="info")
 
     @pyqtSlot(bool, str)
     def _on_api_sync_complete(self, ok: bool, msg: str) -> None:
@@ -302,7 +422,7 @@ class MinimalFotaWindow(QMainWindow):
         self.combo_ports.setEnabled(False)
         self.btn_refresh.setEnabled(False)
 
-        self.lbl_status.setText("● ONLINE")
+        self.lbl_status.setText(f"● ONLINE ({port} @ {self.config.serial_baud})")
         self.lbl_status.setProperty("class", "status-online")
         self.btn_toggle.setText("Stop")
         self.btn_toggle.setProperty("class", "btn-danger")
@@ -323,9 +443,9 @@ class MinimalFotaWindow(QMainWindow):
     @pyqtSlot(str)
     def _on_sleep_event(self, log_line: str) -> None:
         """Handle device sleep and soft shutdown detection signals."""
-        msg = "🌙 Device Sleep / Soft Shutdown Detected!"
-        self.lbl_msg.setText(f"{msg} Monitoring for wake-up boot log...")
-        self.snackbar.show_message(msg, duration_ms=4000)
+        msg = "Soft shutdown detected. Monitoring for wake-up boot log..."
+        self._update_status_card("🌙 DEVICE SLEEP", msg, level="warning")
+        self.snackbar.show_message("🌙 Device Sleep / Soft Shutdown Detected!", duration_ms=4000)
 
     def _stop_engine(self) -> None:
         """Stop serial engine and unlock port selection."""
