@@ -263,8 +263,8 @@ class FotaApiPollerWorker(QThread):
                         self.poll_finished_signal.emit("COMPLETED", msg)
                         break
 
-                    # Determine adaptive polling delay: 600s (10 min) if < 95%, 120s (2 min) if >= 95%
-                    sleep_sec = 120 if progress >= 95.0 else 600
+                    # Determine adaptive polling delay: 60s (1 min) if < 95%, 3s if >= 95%
+                    sleep_sec = 2 if progress >= 95.0 else 60
                     logger.info("Polled IMEI %s -> Progress: %.2f%%, Pings: %d, Attempts: %d/3. Next poll in %d seconds.",
                                 self.imei, progress, ping_count, attempt_count, sleep_sec)
 
@@ -435,11 +435,15 @@ class FotaOrchestrator(QObject):
                 except Exception as err:
                     logger.error("Failed writing audit entry for scanned history: %s", err)
 
-                # 3. If session is ACTIVE, re-attach poller worker to track it to 100%
+                # 3. If session is ACTIVE, emit initial API progress and re-attach poller worker to track it
                 if is_active_fota_session(raw_item):
                     self.target_version = target_ver or raw_item.get("targetFirmwareVersion", "")
                     self.is_upgrading = True
                     self.extension_mgr.trigger_fota_started(self.current_device.uin, self.target_version)
+
+                    scanned_progress = float(raw_item.get("progress") or 0.0)
+                    if scanned_progress > 0.0:
+                        self.update_progress(scanned_progress)
 
                     if not self.poller_worker or not self.poller_worker.isRunning():
                         self.poller_worker = FotaApiPollerWorker(self, self.current_device.imei)
@@ -520,8 +524,11 @@ class FotaOrchestrator(QObject):
 
     def update_progress(self, progress: float) -> None:
         """Update live download progress percentage and continuously validate till 100% done."""
-        self.progress_signal.emit(progress)
-        if progress >= 100.0 and self.is_upgrading and self.current_device and self.target_version:
+        val_clean = max(0.0, min(100.0, float(progress)))
+        self.progress_signal.emit(val_clean)
+        self.status_signal.emit(f"FOTA Downloading: {val_clean:.2f}%")
+
+        if val_clean >= 100.0 and self.is_upgrading and self.current_device and self.target_version:
             msg = f"FOTA download reached 100%. Continuous validation complete for {self.current_device.uin} → {self.target_version}"
             logger.info(msg)
             self.extension_mgr.trigger_fota_completed(self.current_device.uin, self.target_version)

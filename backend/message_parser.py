@@ -35,7 +35,10 @@ class MessageParser:
     IMEI_PATTERN = re.compile(r"^\d{13,15}$")
     VIN_PATTERN = re.compile(r"^[A-Z0-9]{14,18}$", re.IGNORECASE)
     ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-    PROGRESS_PATTERN = re.compile(r"(?:Downloading|FOTA Progress|Progress):\s*(\d+(?:\.\d+)?)\s*%", re.IGNORECASE)
+    PROGRESS_PATTERN = re.compile(
+        r"(?:\[FOT\]\s*)?(?:downloading|download|fota progress|progress)[:=,\s]+(\d+(?:\.\d+)?)\s*%",
+        re.IGNORECASE
+    )
     CIP2_PATTERN = re.compile(r"(?:CIP2|CIP\s*2|IP2|MQTT\s*Server|SERVER2|SERVER\s*2)[:=,\s]+([A-Za-z0-9._-]+)", re.IGNORECASE)
     PLA_SLEEP_PATTERN = re.compile(r"\[PLA\]\s*SLEEP\s+(\d+)", re.IGNORECASE)
 
@@ -120,8 +123,11 @@ class MessageParser:
 
     @classmethod
     def parse_download_progress(cls, line: str) -> Optional[float]:
-        """Extract FOTA download percentage (0.0 to 100.0) from line."""
-        match = cls.PROGRESS_PATTERN.search(line)
+        """Extract FOTA download percentage (0.0 to 100.0) from line matching e.g. '[FOT] downloading 2.43%'."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return None
+        match = cls.PROGRESS_PATTERN.search(clean_line)
         if match:
             try:
                 val = float(match.group(1))

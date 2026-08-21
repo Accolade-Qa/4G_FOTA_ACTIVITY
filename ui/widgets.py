@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QTextCursor, QColor
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -294,11 +294,13 @@ class AuditHistoryTableWidget(QWidget):
 
             st_item = QTableWidgetItem(st_val)
             if "COMPLETED" in st_val:
-                st_item.setForeground(Qt.GlobalColor.green)
+                st_item.setForeground(QColor("#16a34a"))
             elif "ABORTED" in st_val or "FAILED" in st_val:
-                st_item.setForeground(Qt.GlobalColor.red)
+                st_item.setForeground(QColor("#dc2626"))
+            elif "IN_PROGRESS" in st_val or "PROGRESS" in st_val:
+                st_item.setForeground(QColor("#d97706"))
             else:
-                st_item.setForeground(Qt.GlobalColor.yellow)
+                st_item.setForeground(QColor("#d97706"))
 
             self.table.setItem(row_idx, 7, st_item)
             self.table.setItem(row_idx, 8, QTableWidgetItem(str(r.get("remarks", ""))))

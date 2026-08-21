@@ -566,8 +566,11 @@ class MinimalFotaWindow(QMainWindow):
             self.snackbar.show_message(toast_text, duration_ms=3000)
 
     def _queue_log_line(self, line: str) -> None:
-        """Queue incoming serial line for batch flushing and inspect for CIP2 server verification."""
+        """Queue incoming serial line for batch flushing, inspect for CIP2 server verification, and parse real-time progress."""
         self._log_buffer.append(line)
+        prog = MessageParser.parse_download_progress(line)
+        if prog is not None and self.orchestrator:
+            self.orchestrator.update_progress(prog)
         if self.orchestrator:
             self.orchestrator.process_log_line(line)
 
