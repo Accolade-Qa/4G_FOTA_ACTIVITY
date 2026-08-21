@@ -287,6 +287,13 @@ class MinimalFotaWindow(QMainWindow):
         self.orchestrator.device_info_signal.connect(self._on_device_info)
         self.orchestrator.progress_signal.connect(self._on_progress_update)
         self.orchestrator.request_command_signal.connect(self._auto_execute_command)
+        self.orchestrator.snackbar_signal.connect(self._show_snackbar_toast)
+
+    @pyqtSlot(str)
+    def _show_snackbar_toast(self, msg: str) -> None:
+        """Display non-blocking Snackbar Toast alert on UI."""
+        if hasattr(self, "snackbar"):
+            self.snackbar.show_message(msg, duration_ms=4500)
 
     @pyqtSlot(str)
     def _on_orchestrator_status_update(self, text: str) -> None:

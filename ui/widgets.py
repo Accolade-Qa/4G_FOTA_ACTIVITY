@@ -7,6 +7,7 @@ Contains custom UI components:
 - SnackbarWidget: Non-blocking floating toast notification banner.
 """
 
+import json
 import logging
 import os
 import sys

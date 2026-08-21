@@ -53,7 +53,6 @@ class Config:
 
         # Paths
         self.input_dir = self.base_dir / "input"
-        self.output_dir = self.base_dir / "output"
         self.results_dir = self.base_dir / "results"
         self.logs_dir = self.base_dir / "logs"
 
@@ -70,7 +69,7 @@ class Config:
 
     def _ensure_directories(self) -> None:
         """Ensure all required workspace output directories exist."""
-        for d in [self.input_dir, self.output_dir, self.results_dir, self.logs_dir]:
+        for d in [self.input_dir, self.results_dir, self.logs_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
     @property

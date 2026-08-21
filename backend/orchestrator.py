@@ -114,6 +114,24 @@ class FotaAsyncTriggerWorker(QThread):
                 raw_status = str(first_item.get("deviceFotaStatus") or "").strip()
                 status_lower = raw_status.lower()
 
+                # Telemetry Field Matching (UIN, VIN, ICCID) against API Response
+                api_uin = str(first_item.get("uin") or first_item.get("UIN") or "").strip()
+                api_vin = str(first_item.get("vin") or first_item.get("VIN") or "").strip()
+                api_iccid = str(first_item.get("iccid") or first_item.get("ICCID") or "").strip()
+
+                mismatches = []
+                if api_uin and self.login_info.uin and api_uin.lower() != self.login_info.uin.strip().lower():
+                    mismatches.append(f"UIN (Log: '{self.login_info.uin}' != API: '{api_uin}')")
+                if api_vin and self.login_info.vin and api_vin.lower() != self.login_info.vin.strip().lower():
+                    mismatches.append(f"VIN (Log: '{self.login_info.vin}' != API: '{api_vin}')")
+                if api_iccid and self.login_info.iccid and api_iccid.lower() != self.login_info.iccid.strip().lower():
+                    mismatches.append(f"ICCID (Log: '{self.login_info.iccid}' != API: '{api_iccid}')")
+
+                if mismatches:
+                    mismatch_msg = f"⚠️ Telemetry Mismatch: {', '.join(mismatches)}"
+                    logger.warning("TELEMETRY MISMATCH DETECTED for IMEI %s: %s", self.login_info.imei, mismatch_msg)
+                    self.orchestrator.snackbar_signal.emit(mismatch_msg)
+
                 is_aborted = first_item.get("isAborted", False) or bool(first_item.get("abortReason")) or (status_lower == "aborted")
                 is_completed = (
                     first_item.get("deviceFotaCompletionStatus", False)
@@ -156,6 +174,9 @@ class FotaAsyncTriggerWorker(QThread):
             if not next_ver:
                 if not self.orchestrator.resolver.validate_version_exists(self.device_state, self.login_info.version):
                     msg = f"⚠️ Version Validation Barrier: Firmware version '{self.login_info.version}' is NOT listed in servers.json for state '{self.device_state}'. FOTA process blocked."
+                    toast_msg = f"⚠️ Version Warning: Device version '{self.login_info.version}' not found in '{self.device_state}' server matrix!"
+                    logger.warning(toast_msg)
+                    self.orchestrator.snackbar_signal.emit(toast_msg)
                 else:
                     msg = f"Device {self.login_info.uin} is already at the latest firmware level ({self.login_info.version}) for state '{self.device_state}'."
                 self.finished_signal.emit(False, "", "BLOCKED", msg, {})
@@ -269,6 +290,7 @@ class FotaOrchestrator(QObject):
     device_info_signal = pyqtSignal(object)   # LoginPacketInfo entity
     audit_signal = pyqtSignal(object)         # FotaAuditRecord entity
     request_command_signal = pyqtSignal(str)  # Auto-execute serial AT command request
+    snackbar_signal = pyqtSignal(str)         # Non-blocking alert toast for UI
 
     def __init__(self, config: Optional[Config] = None) -> None:
         super().__init__()
