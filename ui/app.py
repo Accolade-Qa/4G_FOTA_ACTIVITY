@@ -5,6 +5,8 @@ smart auto-scroll, state selection dropdown, and automated CIP2 QA server verifi
 Imports modular UI widgets from ui.widgets.
 """
 
+import re
+import datetime
 import json
 import sys
 import logging
@@ -38,6 +40,7 @@ from backend.models import LoginPacketInfo
 from backend.orchestrator import FotaOrchestrator
 from backend.serial_worker import SerialWorker
 from backend.message_parser import MessageParser
+from backend.session_logger import SessionLogger
 from ui.styles import LIGHT_THEME_QSS, DARK_THEME_QSS
 from ui.widgets import (
     ApiSyncWorker,
@@ -64,6 +67,7 @@ class MinimalFotaWindow(QMainWindow):
         self.setStyleSheet(LIGHT_THEME_QSS)
 
         self.config = Config(get_base_dir())
+        self.session_logger = SessionLogger(self.config.logs_dir)
         self.orchestrator = FotaOrchestrator(self.config)
         self.serial_worker: Optional[SerialWorker] = None
         self.api_sync_worker: Optional[ApiSyncWorker] = None
@@ -546,6 +550,14 @@ class MinimalFotaWindow(QMainWindow):
         else:
             self.lbl_ver.setText("---")
 
+        # Update session logger filename pattern: {IMEI}_{REL_FETCHED}_TO_{REL_UPDATE}.log
+        if info.imei or info.version or self.orchestrator.target_version:
+            self.session_logger.update_session_info(
+                info.imei,
+                info.version,
+                self.orchestrator.target_version
+            )
+
         # Trigger Snackbar ONLY ONCE when a new UIN is detected (prevents UI freeze)
         toast_key = (info.uin, info.imei)
         if info.uin and toast_key != self._last_toast_key:
@@ -560,7 +572,7 @@ class MinimalFotaWindow(QMainWindow):
             self.orchestrator.process_log_line(line)
 
     def _flush_log_buffer(self) -> None:
-        """Flush queued log lines without moving viewport when user is scrolled up inspecting past logs."""
+        """Flush queued log lines without moving viewport and delegate logging to SessionLogger."""
         if self._log_buffer:
             sb = self.console.verticalScrollBar()
             prev_val = sb.value()
@@ -568,18 +580,17 @@ class MinimalFotaWindow(QMainWindow):
 
             at_bottom = prev_val >= (max_val - 25)
 
+            # Delegate writing formatted millisecond timestamp logs to SessionLogger
+            if hasattr(self, "session_logger"):
+                if self.orchestrator and self.orchestrator.current_device:
+                    dev = self.orchestrator.current_device
+                    self.session_logger.update_session_info(dev.imei, dev.version, self.orchestrator.target_version)
+                self.session_logger.write_lines(self._log_buffer)
+
             lines = "\n".join(self._log_buffer)
             self._log_buffer.clear()
 
             self.console.appendPlainText(lines)
-
-            # Write terminal logs to logs/terminal_session.log
-            try:
-                term_log_path = self.config.logs_dir / "terminal_session.log"
-                with open(term_log_path, "a", encoding="utf-8") as f:
-                    f.write(lines + "\n")
-            except Exception as err:
-                logger.debug("Failed writing terminal log: %s", err)
 
             if at_bottom:
                 sb.setValue(sb.maximum())

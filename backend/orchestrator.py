@@ -497,9 +497,26 @@ class FotaOrchestrator(QObject):
             if status_type == "COMPLETED":
                 self.extension_mgr.trigger_fota_completed(self.current_device.uin, self.target_version)
                 self._write_audit(self.current_device.uin, self.current_device.version, self.target_version, "COMPLETED", msg)
+                self.is_upgrading = False
             else:
+                # 1. Reset downloading progress bar to 0.00%
+                self.progress_signal.emit(0.0)
+
+                # 2. Save audit report for ABORTED run
                 self._write_audit(self.current_device.uin, self.current_device.version, self.target_version, "ABORTED", msg)
-        self.is_upgrading = False
+                self.is_upgrading = False
+
+                # 3. Re-initiate FOTA API trigger request for device
+                logger.info("FOTA aborted for UIN %s. Re-initiating FOTA API trigger request...", self.current_device.uin)
+                self.status_signal.emit(f"⛔ FOTA Aborted. Audit report saved. Re-initiating FOTA API request for {self.current_device.uin}...")
+
+                dev = self.current_device
+                state = dev.state
+                self.attempted_uins.discard(dev.uin)
+
+                self._trigger_worker = FotaAsyncTriggerWorker(self, dev, state)
+                self._trigger_worker.finished_signal.connect(self._on_trigger_finished)
+                self._trigger_worker.start()
 
     def update_progress(self, progress: float) -> None:
         """Update live download progress percentage and continuously validate till 100% done."""
