@@ -37,10 +37,38 @@ class FirmwareResolver:
             logger.error("Failed to parse firmware JSON: %s", err)
             return False
 
+    def is_version_listed(self, state_name: str, version: str) -> bool:
+        """Check whether version exists in state configuration."""
+        return self.validate_version_exists(state_name, version)
+
+    def get_state_server_metadata(self, state_name: str) -> Dict[str, Any]:
+        """Retrieve server IP, port, and state OTA metadata for a given state server."""
+        states = self.matrix.get("states", {})
+        state_entry = states.get(state_name) or states.get("Default") or {}
+        if isinstance(state_entry, dict):
+            return {
+                "ip1": str(state_entry.get("govtIp1", "") or state_entry.get("ip1", "") or state_entry.get("primaryIp", "")),
+                "port1": str(state_entry.get("port1", "") or state_entry.get("primaryPort", "")),
+                "ip2": str(state_entry.get("govtIp2", "") or state_entry.get("ip2", "") or state_entry.get("secondaryIp", "")),
+                "port2": str(state_entry.get("port2", "") or state_entry.get("secondaryPort", "")),
+                "state_enable": str(state_entry.get("stateEnable", "") or state_entry.get("state_enabled_ota", "")),
+            }
+        return {"ip1": "", "port1": "", "ip2": "", "port2": "", "state_enable": ""}
+
+    def _get_raw_versions_list(self, state_name: str) -> List[Any]:
+        states = self.matrix.get("states", {})
+        state_entry = states.get(state_name)
+        if state_entry is None:
+            state_entry = states.get("Default", [])
+        if isinstance(state_entry, dict):
+            return state_entry.get("firmwares", []) or state_entry.get("firmwareIds", []) or []
+        if isinstance(state_entry, list):
+            return state_entry
+        return []
+
     def get_state_firmware_objects(self, state_name: str) -> List[Dict[str, Any]]:
         """Retrieve full firmware metadata objects for a given state including expectedFirmwareVersion."""
-        states = self.matrix.get("states", {})
-        versions_raw = states.get(state_name) or states.get("Default") or []
+        versions_raw = self._get_raw_versions_list(state_name)
         result = []
         for item in versions_raw:
             if isinstance(item, dict):
@@ -51,8 +79,7 @@ class FirmwareResolver:
 
     def get_state_versions(self, state_name: str) -> List[str]:
         """Retrieve ordered list of firmware versions for a given state."""
-        states = self.matrix.get("states", {})
-        versions_raw = states.get(state_name) or states.get("Default") or []
+        versions_raw = self._get_raw_versions_list(state_name)
         
         versions = []
         for item in versions_raw:

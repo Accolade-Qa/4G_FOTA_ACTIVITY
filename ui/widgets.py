@@ -496,3 +496,106 @@ class ReportingAnalyticsTabWidget(QWidget):
             self.table_versions.setItem(idx, 2, QTableWidgetItem(str(r.get("attemptCount", "1"))))
             st_val = str(r.get("status", "")).upper()
             self.table_versions.setItem(idx, 3, QTableWidgetItem(st_val))
+
+
+class StageProgressionWidget(QFrame):
+    """Dedicated 10-Stage Progression Bar Widget displaying live FOTA stage status."""
+
+    STAGE_NAMES = [
+        "S1: Telemetry Params",
+        "S2: Servers Matrix",
+        "S3: Progress Sync",
+        "S4: Audit Report",
+        "S5: 100% Downloaded",
+        "S6: Device Reboot",
+        "S7: IP1 & Port Set",
+        "S8: IP2 & Port Set",
+        "S9: State OTA Fired",
+        "S10: Config Verified"
+    ]
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("StageProgressionWidget")
+        self.setStyleSheet("""
+            QFrame#StageProgressionWidget {
+                background-color: #0b0f19;
+                border: 1px solid #1e293b;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QLabel {
+                font-size: 7.5pt;
+                font-weight: 600;
+                border-radius: 4px;
+                padding: 4px 2px;
+            }
+            QLabel[class~="stage-waiting"] {
+                background-color: #1e293b;
+                color: #94a3b8;
+                border: 1px solid #334155;
+            }
+            QLabel[class~="stage-running"] {
+                background-color: #78350f;
+                color: #fef08a;
+                border: 1px solid #d97706;
+            }
+            QLabel[class~="stage-passed"] {
+                background-color: #064e3b;
+                color: #a7f3d0;
+                border: 1px solid #16a34a;
+            }
+            QLabel[class~="stage-failed"] {
+                background-color: #7f1d1d;
+                color: #fecaca;
+                border: 1px solid #dc2626;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        self.stage_labels: List[QLabel] = []
+        for idx, name in enumerate(self.STAGE_NAMES, 1):
+            lbl = QLabel(f"{name}\n⏱ WAITING")
+            lbl.setProperty("class", "stage-waiting")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(lbl, stretch=1)
+            self.stage_labels.append(lbl)
+
+    def reset_stages(self) -> None:
+        """Reset all 10 stages back to WAITING state."""
+        for idx, name in enumerate(self.STAGE_NAMES, 1):
+            lbl = self.stage_labels[idx - 1]
+            lbl.setText(f"{name}\n⏱ WAITING")
+            lbl.setProperty("class", "stage-waiting")
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
+
+    def update_stage(self, stage_num: int, status: str, message: str = "") -> None:
+        """Update a specific stage status (1 to 10) with 'WAITING', 'RUNNING', 'PASSED', or 'FAILED'."""
+        if not (1 <= stage_num <= 10):
+            return
+
+        lbl = self.stage_labels[stage_num - 1]
+        name = self.STAGE_NAMES[stage_num - 1]
+        status_clean = str(status).upper()
+
+        badge_class = "stage-waiting"
+        icon = "⏱"
+        if status_clean in ("RUNNING", "IN_PROGRESS"):
+            badge_class = "stage-running"
+            icon = "⚡"
+        elif status_clean in ("PASSED", "COMPLETED", "OK"):
+            badge_class = "stage-passed"
+            icon = "✓"
+        elif status_clean in ("FAILED", "ABORTED", "ERROR"):
+            badge_class = "stage-failed"
+            icon = "✕"
+
+        detail = f"\n{icon} {status_clean}"
+        lbl.setText(f"{name}{detail}")
+        lbl.setProperty("class", badge_class)
+        lbl.style().unpolish(lbl)
+        lbl.style().polish(lbl)

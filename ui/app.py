@@ -50,6 +50,7 @@ from ui.widgets import (
     InteractiveTerminalConsole,
     ReportingAnalyticsTabWidget,
     SnackbarWidget,
+    StageProgressionWidget,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,10 @@ class MinimalFotaWindow(QMainWindow):
         self.progress_bar.setFormat("FOTA Download Progress: 0.00%")
         term_layout.addWidget(self.progress_bar)
 
+        # 10-Stage Progression Bar Widget
+        self.stage_widget = StageProgressionWidget()
+        term_layout.addWidget(self.stage_widget)
+
         # Enterprise Status Banner Card
         self.frame_msg_card = QFrame()
         self.frame_msg_card.setProperty("class", "status-banner status-banner-info")
@@ -292,6 +297,7 @@ class MinimalFotaWindow(QMainWindow):
         self.orchestrator.progress_signal.connect(self._on_progress_update)
         self.orchestrator.request_command_signal.connect(self._auto_execute_command)
         self.orchestrator.snackbar_signal.connect(self._show_snackbar_toast)
+        self.orchestrator.stage_signal.connect(self.stage_widget.update_stage)
 
     @pyqtSlot(str)
     def _show_snackbar_toast(self, msg: str) -> None:

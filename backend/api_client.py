@@ -240,13 +240,25 @@ class FotaApiClient:
                                             if fw_dict and fw_dict not in firmwares_for_state:
                                                 firmwares_for_state.append(fw_dict)
                         except Exception as err:
-                            logger.debug("Error fetching server details for %s (_id: %s): %s",
-                                         state_name, state_id, err)
+                            logger.debug("Error fetching server details for %s (_id: %s): %s", state_name, state_id, err)
 
-                    parsed_matrix[state_name] = firmwares_for_state
+                    ip1 = item.get("govtIp1") or item.get("ip1") or item.get("primaryIp") or item.get("ip") or ""
+                    port1 = item.get("port1") if item.get("port1") is not None else item.get("primaryPort")
+                    ip2 = item.get("govtIp2") or item.get("ip2") or item.get("secondaryIp") or ""
+                    port2 = item.get("port2") if item.get("port2") is not None else item.get("secondaryPort")
+                    state_enable = item.get("stateEnable") or item.get("state_enabled_ota") or item.get("stateEnabledOta") or ""
+
+                    parsed_matrix[state_name] = {
+                        "govtIp1": str(ip1),
+                        "port1": str(port1) if port1 is not None else "",
+                        "govtIp2": str(ip2),
+                        "port2": str(port2) if port2 is not None else "",
+                        "stateEnable": str(state_enable),
+                        "firmwares": firmwares_for_state
+                    }
 
                 if parsed_matrix:
-                    logger.info("Successfully fetched firmwares for %d state servers from API.", len(parsed_matrix))
+                    logger.info("Successfully fetched firmwares & server IP metadata for %d state servers from API.", len(parsed_matrix))
                     print(f"Synced {len(parsed_matrix)} State Servers & Firmwares from .env API into servers.json")
         except Exception as err:
             logger.warning("Failed to fetch state matrix from .env API endpoint %s: %s", list_url, err)

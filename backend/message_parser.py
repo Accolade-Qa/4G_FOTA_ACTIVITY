@@ -41,6 +41,24 @@ class MessageParser:
     )
     CIP2_PATTERN = re.compile(r"(?:CIP2|CIP\s*2|IP2|MQTT\s*Server|SERVER2|SERVER\s*2)[:=,\s]+([A-Za-z0-9._-]+)", re.IGNORECASE)
     PLA_SLEEP_PATTERN = re.compile(r"\[PLA\]\s*SLEEP\s+(\d+)", re.IGNORECASE)
+    CLR_FOTA_OK_PATTERN = re.compile(r"STATUS#CLR#FOTA#OK#(?:(\d{13,15}))?", re.IGNORECASE)
+    CHTP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CHTP#|\*SET#CHTP#|CHTP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CHTP#)([A-Za-z0-9._-]+)[#:\s,]+(\d+)", re.IGNORECASE)
+    CIP1_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP1#|\*SET#CIP1#|CIP1:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP1#)([A-Za-z0-9._-]+)[#:\s,]+(\d+)", re.IGNORECASE)
+    SWEMP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#SWEMP#|\*SET#SWEMP#|SWEMP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#SWEMP#)([A-Za-z0-9._-]+)", re.IGNORECASE)
+    REBOOT_PATTERNS = [
+        re.compile(r"synchronized\s+suspend\s+ok", re.IGNORECASE),
+        re.compile(r"GSM\s+soft\s+shutdown\s+pass", re.IGNORECASE),
+        re.compile(r"soft\s+shnetwork", re.IGNORECASE),
+        re.compile(r"tdown\s+pass", re.IGNORECASE),
+        re.compile(r"MQTT\s+is\s+disconnecting", re.IGNORECASE),
+        re.compile(r"System\s+Booting", re.IGNORECASE),
+        re.compile(r"BOOTLOADER\s+INIT", re.IGNORECASE),
+        re.compile(r"\*SET#CRST#1#", re.IGNORECASE),
+        re.compile(r"TCU\s+RESET\s+OK", re.IGNORECASE),
+        re.compile(r"aeplFwVer", re.IGNORECASE),
+        re.compile(r"UPTIME\s+SEC", re.IGNORECASE),
+        re.compile(r"\[PLA\]\s*SYSTEM", re.IGNORECASE),
+    ]
 
     # Dynamic valid states populated from API response / servers.json
     DYNAMIC_VALID_STATES: Set[str] = {"do not delete", "default"}
@@ -197,6 +215,62 @@ class MessageParser:
                 return val
 
         return None
+
+    @classmethod
+    def parse_clr_fota_ok(cls, line: str) -> Tuple[bool, Optional[str]]:
+        """Check for STATUS#CLR#FOTA#OK#{IMEI} in serial line."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return False, None
+        match = cls.CLR_FOTA_OK_PATTERN.search(clean_line)
+        if match:
+            return True, match.group(1)
+        return False, None
+
+    @classmethod
+    def parse_chtp_primary_ip_port(cls, line: str) -> Optional[Tuple[str, str]]:
+        """Extract primary server CHTP IP and Port tuple from tcp ota log line."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return None
+        match = cls.CHTP_FULL_PATTERN.search(clean_line)
+        if match:
+            ip = match.group(1).strip()
+            port = match.group(2).strip() if match.group(2) else ""
+            return ip, port
+        return None
+
+    @classmethod
+    def parse_cip1_secondary_ip_port(cls, line: str) -> Optional[Tuple[str, str]]:
+        """Extract secondary server CIP1 IP and Port tuple from tcp ota log line."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return None
+        match = cls.CIP1_FULL_PATTERN.search(clean_line)
+        if match:
+            ip = match.group(1).strip()
+            port = match.group(2).strip() if match.group(2) else ""
+            return ip, port
+        return None
+
+    @classmethod
+    def parse_swemp_state_ota(cls, line: str) -> Optional[str]:
+        """Extract SWEMP State Enabled OTA code from tcp ota log line."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return None
+        match = cls.SWEMP_FULL_PATTERN.search(clean_line)
+        if match:
+            return match.group(1).strip().strip("#").strip()
+        return None
+
+    @classmethod
+    def is_device_reboot(cls, line: str) -> bool:
+        """Check for boot loader header or system reset log indicator."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return False
+        return any(pat.search(clean_line) for pat in cls.REBOOT_PATTERNS)
 
     @classmethod
     def parse_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
