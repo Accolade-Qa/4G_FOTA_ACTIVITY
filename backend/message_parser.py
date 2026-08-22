@@ -103,16 +103,13 @@ class MessageParser:
 
     @classmethod
     def is_valid_vin(cls, vin: Optional[str]) -> bool:
-        """Validate VIN consisting of 14 to 18 alphanumeric characters (must contain numeric digits)."""
+        """Validate VIN consisting of 14 to 18 alphanumeric characters."""
         if not vin:
             return False
         clean = vin.strip().upper()
         if len(clean) not in range(14, 19):
             return False
         if clean in INVALID_VIN_WORDS or clean.isdigit() or clean.lower() in ("null", "none", "debug", "info", "system", "analog"):
-            return False
-        # A real VIN or chassis ID must contain numeric digits (prevents English words like SYNCHRONIZATION)
-        if not any(char.isdigit() for char in clean):
             return False
         return bool(re.match(r"^[A-Z0-9]{14,18}$", clean))
 
@@ -140,8 +137,8 @@ class MessageParser:
         return None
 
     @classmethod
-    def parse_download_progress(cls, line: str) -> Optional[float]:
-        """Extract FOTA download percentage (0.0 to 100.0) from line matching e.g. '[FOT] downloading 2.43%'."""
+    def parse_download_progress(cls, line: str, total_file_size: int = 0) -> Optional[float]:
+        """Extract FOTA download percentage (0.0 to 100.0) from line matching e.g. '[FOT] downloading 2.43%' or '|55AA,2,8192,1024,FF|'."""
         clean_line = cls.strip_ansi(line)
         if not clean_line:
             return None
@@ -152,6 +149,11 @@ class MessageParser:
                 return max(0.0, min(100.0, val))
             except ValueError:
                 pass
+
+        if "55AA" in clean_line:
+            chunk = cls.parse_55aa_chunk_progress(clean_line, total_file_size=total_file_size)
+            if chunk and chunk.get("percentage") is not None:
+                return chunk["percentage"]
         return None
 
     @classmethod
@@ -273,11 +275,143 @@ class MessageParser:
         return any(pat.search(clean_line) for pat in cls.REBOOT_PATTERNS)
 
     @classmethod
+    def parse_55aa_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
+        """Parse structured 55AA GSM_TX login packet format:
+        e.g. |55AA,1,2,1786520105,869860080013235,89916450544846812199,ACON4NA022600682337,5.2.6_REL07,AAAAAAAAAAAAAA,...|
+        Indices:
+          0: 55AA (Header)
+          3: Epoch Timestamp
+          4: IMEI
+          5: ICCID
+          6: UIN
+          7: Firmware Version (Current active version)
+          8: VIN
+        """
+        clean_line = cls.strip_ansi(line)
+        if not clean_line or "55AA" not in clean_line:
+            return None
+
+        match = re.search(r"\|?\s*(55AA\s*,[^\|]+)", clean_line)
+        if not match:
+            return None
+
+        payload_str = match.group(1).strip()
+        parts = [p.strip() for p in payload_str.split(",")]
+
+        if len(parts) >= 9 and parts[0].upper() == "55AA":
+            imei = parts[4]
+            iccid = parts[5]
+            uin = parts[6]
+            version = parts[7]
+            vin = parts[8]
+
+            valid_imei = imei if cls.is_valid_imei(imei) else ""
+            valid_uin = uin if cls.is_valid_uin(uin) else ""
+            valid_vin = vin.upper() if cls.is_valid_vin(vin) else "MAT00000000000000"
+
+            if valid_uin or valid_imei or version:
+                return LoginPacketInfo(
+                    imei=valid_imei,
+                    iccid=iccid if (len(iccid) in (18, 19, 20) and iccid.isdigit()) else "",
+                    uin=valid_uin,
+                    version=version,
+                    vin=valid_vin,
+                    model="4G",
+                    state="DO NOT DELETE",
+                )
+        return None
+
+    @classmethod
+    def parse_55aa_server_fota_header(cls, line: str) -> Optional[Dict[str, Any]]:
+        """Parse server FOTA header packet format:
+        e.g. |55AA,1,2,1786521830,5.2.8,1,0,0,1626492,0,1024,FF|
+        Indices:
+          0: 55AA (Header)
+          1: 1 (Type ID)
+          2: 2 (Subtype ID)
+          3: Epoch Timestamp
+          4: Target Firmware Version on which FOTA is initiated (e.g. 5.2.8)
+          5: FOTA Process Flag (1 = Active)
+          8: Total Firmware File Size in Bytes (e.g. 1626492)
+          10: Chunk Size in Bytes (e.g. 1024)
+          Last: FF
+        """
+        clean_line = cls.strip_ansi(line)
+        if not clean_line or "55AA" not in clean_line:
+            return None
+
+        match = re.search(r"\|?\s*(55AA\s*,[^\|]+)", clean_line)
+        if not match:
+            return None
+
+        payload_str = match.group(1).strip()
+        parts = [p.strip() for p in payload_str.split(",")]
+
+        if len(parts) >= 11 and parts[0].upper() == "55AA" and parts[1] == "1" and parts[2] == "2":
+            try:
+                target_version = parts[4]
+                fota_flag = int(parts[5])
+                file_size = int(parts[8])
+                chunk_size = int(parts[10]) if len(parts) > 10 else 1024
+                return {
+                    "target_version": target_version,
+                    "fota_flag": fota_flag,
+                    "file_size": file_size,
+                    "chunk_size": chunk_size
+                }
+            except (ValueError, IndexError):
+                pass
+        return None
+
+    @classmethod
+    def parse_55aa_chunk_progress(cls, line: str, total_file_size: int = 0) -> Optional[Dict[str, Any]]:
+        """Parse device FOTA chunk progress packet format:
+        e.g. |55AA,2,6144,1024,FF|  or  |55AA,2,8192,1024,FF|
+        Indices:
+          0: 55AA (Header)
+          1: 2 (Chunk Subtype ID)
+          2: Received Bytes (e.g. 6144, 7168, 8192)
+          3: Chunk Size (e.g. 1024)
+          4: FF (Trailer)
+        """
+        clean_line = cls.strip_ansi(line)
+        if not clean_line or "55AA" not in clean_line:
+            return None
+
+        match = re.search(r"\|?\s*(55AA\s*,[^\|]+)", clean_line)
+        if not match:
+            return None
+
+        payload_str = match.group(1).strip()
+        parts = [p.strip() for p in payload_str.split(",")]
+
+        if len(parts) >= 4 and parts[0].upper() == "55AA" and parts[1] == "2":
+            try:
+                received_bytes = int(parts[2])
+                chunk_size = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 1024
+                percentage = None
+                if total_file_size > 0:
+                    percentage = max(0.0, min(100.0, (received_bytes / float(total_file_size)) * 100.0))
+                return {
+                    "received_bytes": received_bytes,
+                    "chunk_size": chunk_size,
+                    "percentage": percentage
+                }
+            except (ValueError, IndexError):
+                pass
+        return None
+
+    @classmethod
     def parse_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
         """Extract structured LoginPacketInfo dynamically from device serial log line."""
         clean_line = cls.strip_ansi(line)
         if not clean_line:
             return None
+
+        if "55AA" in clean_line:
+            pkt_55aa = cls.parse_55aa_login_packet(clean_line)
+            if pkt_55aa:
+                return pkt_55aa
 
         imei_match = re.search(r"(?:IMEI|imei)[:=]?\s*(\d{13,15})", clean_line)
         uin_match = re.search(r"(?:UIN|uin)[:=]?\s*(ACON[A-Za-z0-9_-]{4,28})", clean_line)

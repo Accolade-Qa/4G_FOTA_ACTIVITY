@@ -3,7 +3,7 @@
 **Document Control Information**  
 - **Document ID**: SOP-QA-FOTA-001  
 - **Title**: Continuous FOTA Automation Utility — User Interface & System Operating Procedure  
-- **Version**: 1.1.0  
+- **Version**: 2.0.0  
 - **Effective Date**: August 2026  
 - **Target Hardware**: Accolade 4G Telematics / TCU Units (AIS-140 Compliant)  
 - **Author**: QA Automation & Hardware Testing Engineering Team  
@@ -12,7 +12,7 @@
 
 ## 1. PURPOSE & SCOPE
 
-This Standard Operating Procedure (SOP) provides exhaustive, step-by-step instructions for operating the **Continuous FOTA Automation Utility**. The utility automates continuous Firmware Over-The-Air (FOTA) testing, serial boot log telemetry abstraction, state matrix validation, and REST API job triggering for Accolade 4G TCU hardware units.
+This Standard Operating Procedure (SOP) provides exhaustive, step-by-step instructions for operating the **Continuous FOTA Automation Utility**. The utility automates continuous Firmware Over-The-Air (FOTA) testing, serial boot log telemetry abstraction, 10-stage progression validation, state matrix verification, and REST API job triggering for Accolade 4G TCU hardware units.
 
 This procedure applies to QA Automation Engineers, Hardware Test Technicians, Embedded Firmware Developers, and Production Staging Personnel.
 
@@ -22,7 +22,7 @@ This procedure applies to QA Automation Engineers, Hardware Test Technicians, Em
 
 The utility is built on a multi-threaded architecture using **PyQt6** and **PySerial** to ensure the User Interface (UI) remains 100% responsive and never freezes during high-volume serial stream reads or network API calls:
 
-```
+```text
                                   ┌─────────────────────────────────────────────────────────────┐
                                   │           1. Main GUI Event Loop (PyQt6 UI)                 │
                                   │       (ui/app.py -> MinimalFotaWindow Controller)           │
@@ -32,8 +32,8 @@ The utility is built on a multi-threaded architecture using **PyQt6** and **PySe
          ▼                                      ▼                                       ▼                                      ▼
 ┌──────────────────────────┐         ┌──────────────────────────┐            ┌──────────────────────────┐           ┌──────────────────────────┐
 │  2. ApiSyncWorker Thread │         │ 3. SerialWorker Thread   │            │ 4. FotaAsyncTriggerWorker│           │ 5. FotaApiPollerWorker   │
-│  (Syncs state matrix from│         │ (Reads live COM port data│            │ (Queries history, handles│           │ (Monitors active FOTA job│
-│  API to servers.json)    │         │ & feeds MessageParser)   │            │ 3 statuses, posts POST)  │           │ progress until 100%)     │
+│  (Syncs state matrix from│         │ (Reads live COM port data│            │ (Queries history, handles│           │ (Adaptive polling: 60s   │
+│  API to servers.json)    │         │ & feeds MessageParser)   │            │ 3 statuses, posts POST)  │           │ <95%, 2s >=95%)          │
 └──────────────────────────┘         └──────────────────────────┘            └──────────────────────────┘           └──────────────────────────┘
 ```
 
@@ -41,24 +41,38 @@ The utility is built on a multi-threaded architecture using **PyQt6** and **PySe
 
 ## 3. USER INTERFACE (UI) LAYOUT & INTERACTIVE CONTROLS
 
-The user interface is organized into a clean 3-Tab Architecture:
+The user interface is organized into a clean 3-Tab Architecture with integrated 10-Stage Progression Bar:
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ FOTA UTILITY  ● ONLINE (COM5 @ 115200) [Target State: Maharashtra ▾] [Port: COM5 ▾] [↻] [🌙] [Start] │
-├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ [ 🖥️ Live Serial Console & Control ]   [ 📊 Audit Log History ]   [ 📈 Analytics & Reporting ]   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FOTA UTILITY  ● ONLINE (COM5 @ 115200)                             Target State: [ Maharashtra ▾ ]   Port: [ COM5 ▾ ]  [↻]  [🌙]  [ Stop ]  │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [ 🖥️ Live Serial Console & Control ]   [ 📊 Audit Log History ]   [ 📈 Analytics & Reporting ]                                              │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ IMEI: 861564069210428  | UIN: ACON4NA... | VIN: ACC... | ICCID: 899... | CURRENT STATE: Maharashtra | FIRMWARE: 5.2.9 -> 5.2.12 [Clear Info] │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ FOTA Download Progress: 100.00% [=========================================================================================================] │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [S1: Telemetry]  [S2: Servers Matrix]  [S3: Progress]  [S4: Audit]  [S5: 100% Download]  [S6: Reboot]  [S7: IP1]  [S8: IP2]  [S9: OTA]  [S10: Config]│
+│   ✓ PASSED          ✓ PASSED             ✓ PASSED        ✓ PASSED      ✓ PASSED          ✓ PASSED      ✓ PASSED   ✓ PASSED   ✓ PASSED    ✓ PASSED   │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ⚡ IN-PROGRESS | FOTA Downloading: 100.00% | Status: In-Progress                                                                            │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [2026-08-21 19:03:22.519] INFO:  [FOT] tcp ota response: STATUS#CLR#FOTA#OK#861564069210428,                                                │
+│ [2026-08-21 19:03:22.519] DEBUG: [CVP] MQTT is disconnecting from GSM soft shutdown pass                                                   │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ > Type serial/AT command and press Enter (e.g. *SET#CRST#1#)...                                                 [ Send Command ] [ Clear ]  │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.1 Header Navigation & Controls Bar
-- **Application Title (`FOTA UTILITY`)**: Displays standard workspace header.
-- **Online Connection Status Indicator (`● ONLINE (COM5 @ 115200)` / `● OFFLINE`)**: Color-coded indicator displaying real-time serial port connection and baud rate details.
-- **Target State Dropdown (`Target State:`)**: Populated dynamically from backend server matrices (e.g., *Maharashtra*, *Bihar*, *Assam*, *Default*). Dictates the server target state for FOTA upgrade resolution.
-- **COM Port Selector (`Port:`)**: Lists available hardware serial communication ports discovered on the Windows workstation.
-- **Port Refresh Button (`↻`)**: Scans system hardware and updates the COM port dropdown (`Ctrl+R`).
-- **Theme Switcher (`🌙` / `☀️`)**: Toggles instantly between **Light Theme** and **Cyber-Dark Theme** QSS stylesheets (`Ctrl+T`).
-- **Engine Start/Stop Button (`Start` / `Stop`)**: Controls the opening and closing of the COM port connection.
+### 3.1 Header Controls Bar
+- **Application Title (`FOTA UTILITY`)**: Standard workspace header.
+- **Connection Status (`● ONLINE (COM5 @ 115200)` / `● OFFLINE`)**: Real-time connection status.
+- **Target State Dropdown (`Target State:`)**: Dynamic server target state selector (*Maharashtra*, *Bihar*, *Assam*, *Default*).
+- **COM Port Selector (`Port:`)**: Discovered workstation serial ports.
+- **Port Refresh Button (`↻`)**: Scans hardware serial ports (`Ctrl+R`).
+- **Theme Switcher (`🌙` / `☀️`)**: Toggles Light / Cyber-Dark Theme QSS (`Ctrl+T`).
+- **Engine Start/Stop Button (`Start` / `Stop`)**: Connects/disconnects COM port connection.
 
 ### 3.2 Telemetry Summary Bar (Tab 1)
 Displays live abstracted hardware parameters captured from device serial boot logs:
@@ -67,15 +81,29 @@ Displays live abstracted hardware parameters captured from device serial boot lo
 - **VIN**: Vehicle chassis identification number.
 - **ICCID**: SIM card identification number.
 - **CURRENT STATE**: Target server state active for the device.
-- **FIRMWARE**: Current active firmware version parsed from device logs (e.g., `5.2.8_REL25`).
-- **`Clear Info` Button**: Resets captured telemetry fields and clears the internal log accumulator for a fresh test cycle.
+- **FIRMWARE**: Current active firmware version parsed from device logs (e.g., `5.2.9 5th IP`).
+- **`Clear Info` Button**: Resets captured telemetry fields.
 
 ### 3.3 Visual Progress Bar (`QProgressBar`)
 - Dedicated visual progress bar configured with 2-decimal precision (`0-100.00%`).
-- Smoothly chunk-filled with QSS gradient highlights (`#0284c7` to `#818cf8`) during active FOTA downloads and background status polling.
+- Gradient highlights (`#46b023` to `#70e846`).
+- Real-time updates driven by direct serial log parsing (`[FOT] downloading XX.XX%`) and background REST API polling.
 
-### 3.4 Enterprise Status Banner Card
-Padded status card with dynamic stage badges and color-coded background highlights:
+### 3.4 10-Stage Progression Bar Widget (`StageProgressionWidget`)
+Dedicated visual widget displaying 10 sequential execution stage badges with color-coded status badges (`WAITING` ⏱, `RUNNING` ⚡, `PASSED` ✓, `FAILED` ✕):
+1. `S1: Telemetry Params`: Abstraction of UIN, IMEI, VIN, Version, State.
+2. `S2: Servers Matrix`: Validation against `input/servers.json` metadata.
+3. `S3: Progress Sync`: FOTA history scanned & active tracking attached.
+4. `S4: Audit Report`: Persistence into CSV, JSON, and session logs.
+5. `S5: 100% Downloaded`: Download percentage reaches 100.00%.
+6. `S6: Device Reboot`: Post-download reboot/reset log line verification (120s window).
+7. `S7: IP1 & Port Set`: Primary Server CHTP verification (`STATUS#SET#CHTP#...#OK#`).
+8. `S8: IP2 & Port Set`: Secondary Server CIP1 verification (`STATUS#SET#CIP1#...#OK#`).
+9. `S9: State OTA Fired`: SWEMP State Enabled OTA verification (`STATUS#SET#SWEMP#...#OK#`).
+10. `S10: Config Verified`: Post-upgrade config integrity vs pre-upgrade snapshot.
+
+### 3.5 Enterprise Status Banner Card
+Dynamic stage card with background highlights:
 - `📋 SCANNING`: `Fetching history from server...`
 - `⚡ IN-PROGRESS`: `FOTA Downloading: 45.20% | Pings: 2 | Attempt 1/3`
 - `🎉 COMPLETED`: `100.0% Downloaded & Validated`
@@ -83,13 +111,9 @@ Padded status card with dynamic stage badges and color-coded background highligh
 - `⚠️ WARNING`: `Version 5.2.8_REL25 not found in servers.json`
 - `🌙 DEVICE SLEEP`: `Soft shutdown detected. Monitoring for wake-up boot log...`
 
-### 3.5 Interactive Terminal Console & White Log Output
-- Monospace console output rendering serial logs in **pure crisp white text (`#f8fafc`)** against a dark obsidian background in Dark Theme.
-- Driven by a high-frequency `QTimer(50ms)` buffer flusher to ensure zero UI rendering freezes.
-
-### 3.6 Command Line & Clear Log Controls
-- **AT Command Line (`CommandHistoryLineEdit`)**: Input bar for sending AT commands (`*SET#CRST#1#`) with `Up`/`Down` arrow history ring buffer.
-- **`Clear Log` Button**: Single-click button beside the command bar to clear terminal logs (`Ctrl+K` / `Ctrl+L`).
+### 3.6 Dual Continuous Logging System
+- **Master Log Stream (`logs/terminal_session.log`)**: Continuously records all terminal session output (never stops).
+- **Session Dedicated Log (`logs/{IMEI}_{REL_FETCHED}_TO_{REL_UPDATE}.log`)**: Generated per device FOTA run with millisecond timestamps (`[YYYY-MM-DD HH:MM:SS.fff]`).
 
 ### 3.7 Keyboard Shortcuts Reference
 - `Ctrl+K` / `Ctrl+L`: Clear live terminal console.
@@ -102,40 +126,80 @@ Padded status card with dynamic stage badges and color-coded background highligh
 ## 4. AUDIT & ANALYTICS DASHBOARD TABS
 
 ### 4.1 Tab 2: Audit Log History (`AuditHistoryTableWidget`)
-- **4 Metric Cards**: Real-time summary displaying **TOTAL EXECUTIONS**, **COMPLETED**, **ABORTED / FAILED**, and **SUCCESS RATE %**.
-- **Interactive Table**: Sortable data table loading records directly from `results/fota_results.json`.
-- **Search & Filter Bar**: Search input (`🔍 Filter by UIN, IMEI, VIN...`) + Status filter dropdown (`COMPLETED`, `ABORTED`, `IN_PROGRESS`, `BLOCKED`).
-- **`📥 Export CSV` Button**: Export filtered execution records directly to CSV report files.
+- **4 Metric Cards**: Displays **TOTAL EXECUTIONS**, **COMPLETED**, **ABORTED / FAILED**, and **SUCCESS RATE %**.
+- **Dark Yellow Status (`#d97706`)**: Highlights `IN_PROGRESS` runs cleanly in dark yellow text.
+- **Interactive Table**: Sortable table loading from `results/fota_results.json`.
+- **`📥 Export CSV` Button**: Exports filtered audit entries to CSV.
 
 ### 4.2 Tab 3: Analytics & Reporting (`ReportingAnalyticsTabWidget`)
-- **State Server Matrix Distribution**: Table showing execution counts and pass rates per state server.
-- **Firmware Version Progression Breakdown**: Tracks version transitions (e.g. `5.2.8_REL25` ➔ `5.2.9_REL05`) and attempt counts.
+- **State Server Matrix Distribution**: Execution counts and pass rates per state server.
+- **Firmware Version Progression Breakdown**: Tracks version transitions and attempt counts.
 
 ---
 
 ## 5. STANDARD OPERATING PROCEDURE (STEP-BY-STEP EXECUTION)
 
-### Phase 1: Launch & Matrix Sync
-1. Launch `Continuos_Fota.exe` (or run `python main.py`).
-2. `ApiSyncWorker` will automatically run on startup to sync state matrices from the REST API into `input/servers.json`.
-
-### Phase 2: Serial Engine Connection
-1. Select the connected COM port (e.g., `COM5`) from the dropdown.
-2. Click **Start**. The status badge updates to **● ONLINE (COM5 @ 115200)** and serial logs stream in white text.
-
-### Phase 3: Telemetry Abstraction & 5-Field Gating
-1. Power cycle the TCU unit or send `*SET#CRST#1#` via the command bar.
-2. `MessageParser` abstracts UIN (`ACON...`), IMEI, VIN, Firmware Version, and State.
-3. Once all 5 fields are captured, the system queries the backend history API (`getFOTADevicesHistory`).
-
-### Phase 4: History Evaluation & 3-Status Execution Logic
-- **`Pending` / `In-Progress`**: SKIPS issuing a new API POST call (prevents server job aborts) and re-attaches poller.
-- **`Aborted`**: Resolves next target version after aborted target and posts NEW FOTA API trigger.
-- **`Completed`**: Resolves next sequential version (`idx + 1`) after completed version and posts NEW FOTA API trigger.
-
-### Phase 5: Live FOTA Polling & Completion
-1. Adaptive poller tracks active jobs every 10 mins (`<95%`) or 2 mins (`>=95%`).
-2. The visual progress bar updates to 100%, and completion audit logs are persisted to `results/fota_results.csv` and `results/fota_results.json`.
+```text
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │                            1. PRE-START VERIFICATION                             │
+ │            Listen for: STATUS#CLR#FOTA#OK#{IMEI} in serial log stream            │
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │                        2. STAGE 1: TELEMETRY PARSING                             │
+ │           Parse UIN, IMEI, VIN, Version, State + Save Pre-Upgrade Snapshot        │
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │                       3. STAGE 2: SERVERS MATRIX CHECK                           │
+ │     Validate current version in servers.json & extract CHTP, CIP1, SWEMP params  │
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │                    4. STAGE 3 & STAGE 4: SYNC & AUDIT REPORT                     │
+ │     Scan history (Pending -> Track; Manual Abort -> Retry from active log version;│
+ │     System Abort -> Advance past aborted target; Completed -> Advance next ver) │
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │                        5. STAGE 5: 100% DOWNLOADED                               │
+ │   Parse real-time [FOT] downloading 100.00% log line or API poller 100% progress │
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │                   6. STAGE 6: DEVICE REBOOT (120s Window)                        │
+ │  Listen for: "synchronized suspend ok", "GSM soft shutdown pass", "MQTT disconnect"│
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │                 7. STAGE 9: SWEMP STATE ENABLED OTA VERIFIED                     │
+ │  Listen for: STATUS#SET#SWEMP#<state>#OK# & match stateEnable in servers.json    │
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │               8. STAGE 7: PRIMARY SERVER CHTP IP1 & PORT1 VERIFIED               │
+ │  Listen for: STATUS#SET#CHTP#<ip>#<port>#OK# & match govtIp1/port1 in servers.json│
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │              9. STAGE 8: SECONDARY SERVER CIP1 IP2 & PORT2 VERIFIED              │
+ │  Listen for: STATUS#SET#CIP1#<ip>#<port>#OK# & match govtIp2/port2 in servers.json│
+ └────────────────────────────────────────┬─────────────────────────────────────────┘
+                                          │
+                                          ▼
+ │                    10. STAGE 10: CONFIG & 55AA VERSION VERIFIED                │
+ │    Validate post-upgrade firmware version from 55AA Login Packet (idx 7 == target)│
+ │    & compare telemetry vs snapshot ➔ Mark overall flow COMPLETED ➔ Next Trigger  │
+ └──────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -146,6 +210,7 @@ Padded status card with dynamic stage badges and color-coded background highligh
 | **Port Failed to Open** | COM port occupied by another app. | Close other apps, press `Ctrl+R` to refresh ports, and click **Start**. |
 | **BLOCKED_VERSION_NOT_FOUND** | Version not listed in `input/servers.json`. | Select correct Target State or update `input/servers.json`. |
 | **API HTTP 401** | Token expired. | Verify `.env` credentials and restart application. |
+| **Aborted Status Received** | Server manually aborted run. | Engine automatically resets progress bar to `0.00%`, logs CSV/JSON audit, and re-initiates FOTA request. |
 | **Attempt Limit (3/3)** | 3 server attempts failed. | Power cycle device, send `*SET#CRST#1#`, and retry. |
 
 ---

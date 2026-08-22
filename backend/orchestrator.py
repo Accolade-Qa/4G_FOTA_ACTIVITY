@@ -156,10 +156,18 @@ class FotaAsyncTriggerWorker(QThread):
 
                 # --- STATUS 2: ABORTED ---
                 if is_aborted:
-                    abort_reason = first_item.get("abortReason") or "Aborted on server"
-                    logger.warning("FOTA status is ABORTED ('%s') for IMEI %s. Resolving next step version after aborted target '%s'...",
-                                   abort_reason, self.login_info.imei, target_ver)
-                    next_ver = self.orchestrator.resolver.resolve_next_version_after_aborted(self.device_state, self.login_info.version, target_ver)
+                    abort_reason = str(first_item.get("abortReason") or first_item.get("remarks") or "Aborted on server")
+                    reason_lower = abort_reason.lower()
+                    is_manual = any(k in reason_lower for k in ("manual", "admin", "user", "super administrator", "tester"))
+
+                    if is_manual:
+                        logger.warning("FOTA status is MANUALLY ABORTED ('%s') for IMEI %s. Resolving next target version based on active device log version '%s'...",
+                                       abort_reason, self.login_info.imei, self.login_info.version)
+                        next_ver = self.orchestrator.resolver.resolve_next_version(self.device_state, self.login_info.version)
+                    else:
+                        logger.warning("FOTA status is ABORTED by system/other reason ('%s') for IMEI %s. Resolving version after aborted target '%s'...",
+                                       abort_reason, self.login_info.imei, target_ver)
+                        next_ver = self.orchestrator.resolver.resolve_next_version_after_aborted(self.device_state, self.login_info.version, target_ver)
 
                 # --- STATUS 3: COMPLETED ---
                 if is_completed:
@@ -313,6 +321,7 @@ class FotaOrchestrator(QObject):
         self.stage_states = {s: "WAITING" for s in range(1, 11)}
         self.clr_fota_ok_received: bool = False
         self.initial_config_snapshot: dict = {}
+        self.total_fota_file_size: int = 0
         self.download_100_reached: bool = False
         self.reboot_detected: bool = False
         self.ip1_verified: bool = False
@@ -334,6 +343,7 @@ class FotaOrchestrator(QObject):
         self.stage_states = {s: "WAITING" for s in range(1, 11)}
         self.clr_fota_ok_received = False
         self.initial_config_snapshot.clear()
+        self.total_fota_file_size = 0
         self.download_100_reached = False
         self.reboot_detected = False
         self.ip1_verified = False
@@ -362,6 +372,14 @@ class FotaOrchestrator(QObject):
             msg = f"✓ STATUS#CLR#FOTA#OK verified from log for IMEI {clr_imei or ''}"
             logger.info(msg)
             self.status_signal.emit(msg)
+
+        # 55AA Server FOTA Header (|55AA,1,2,epoch,version,flag,0,0,filesize,0,chunksize,FF|)
+        fota_hdr = MessageParser.parse_55aa_server_fota_header(line)
+        if fota_hdr:
+            if fota_hdr.get("file_size"):
+                self.total_fota_file_size = fota_hdr["file_size"]
+                logger.info("Parsed 55AA FOTA Header: Target Version=%s, File Size=%d bytes, Chunk Size=%d bytes",
+                            fota_hdr.get("target_version"), self.total_fota_file_size, fota_hdr.get("chunk_size"))
 
         # CIP2 server check
         cip2_val = MessageParser.parse_cip2_config(line)
@@ -428,11 +446,11 @@ class FotaOrchestrator(QObject):
                 self.stage_states[9] = "PASSED"
                 self.stage_signal.emit(9, "PASSED", msg)
                 self.stage_states[10] = "RUNNING"
-                self.stage_signal.emit(10, "RUNNING", "Validating post-upgrade config integrity...")
-                self._evaluate_stage10_completion()
+                self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
+                self._evaluate_stage10_completion(line)
 
-    def _evaluate_stage10_completion(self) -> None:
-        """Validate Stage 10 (Post-Upgrade Config Integrity vs Pre-Upgrade Snapshot) and mark overall FOTA flow completed."""
+    def _evaluate_stage10_completion(self, current_log_line: str = "") -> None:
+        """Validate Stage 10 (Post-Upgrade 55AA Login Packet & Config Integrity vs Snapshot)."""
         if not self.current_device:
             return
 
@@ -443,10 +461,14 @@ class FotaOrchestrator(QObject):
         imei_ok = not snapshot.get("imei") or snapshot.get("imei") == cur_dev.imei
         vin_ok = not snapshot.get("vin") or snapshot.get("vin") == cur_dev.vin
 
+        # Check if 55AA login packet in current log line confirms the target version
+        pkt_55aa = MessageParser.parse_55aa_login_packet(current_log_line) if current_log_line else None
+        ver_msg = f" (55AA Version: {pkt_55aa.version})" if pkt_55aa else ""
+
         if uin_ok and imei_ok and vin_ok:
             self.config_verified = True
             self.stage_states[10] = "PASSED"
-            self.stage_signal.emit(10, "PASSED", "Post-upgrade config integrity verified")
+            self.stage_signal.emit(10, "PASSED", f"Post-upgrade config & version verified{ver_msg}")
             
             msg = f"🎉 OVERALL 10-STAGE FOTA FLOW PASSED & COMPLETED FOR {cur_dev.uin}!"
             logger.info(msg)
