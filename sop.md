@@ -69,10 +69,10 @@ The user interface is organized into a clean 3-Tab Architecture with integrated 
 - **Application Title (`FOTA UTILITY`)**: Standard workspace header.
 - **Connection Status (`● ONLINE (COM5 @ 115200)` / `● OFFLINE`)**: Real-time connection status.
 - **Target State Dropdown (`Target State:`)**: Dynamic server target state selector (*Maharashtra*, *Bihar*, *Assam*, *Default*).
-- **COM Port Selector (`Port:`)**: Discovered workstation serial ports.
-- **Port Refresh Button (`↻`)**: Scans hardware serial ports (`Ctrl+R`).
-- **Theme Switcher (`🌙` / `☀️`)**: Toggles Light / Cyber-Dark Theme QSS (`Ctrl+T`).
-- **Engine Start/Stop Button (`Start` / `Stop`)**: Connects/disconnects COM port connection.
+- **COM Port Selector (`Port:`)**: Scans all workstation COM ports and formats entries with hardware classification (`COM5 [Serial] - USB Serial Port` vs `COM8 [Bluetooth] - Standard Serial over Bluetooth`).
+- **Port Refresh Button (`Refresh`)**: Scans hardware serial ports (`Ctrl+R`).
+- **Bluetooth Guard & Warning**: Displays a warning in the status message card if a Bluetooth port is selected (`Warning: COM8 is a Bluetooth port...`) and blocks starting the engine.
+- **Engine Start/Stop Button (`Start Engine` / `Stop Engine`)**: Validates physical Serial port selection, locks dropdown/refresh controls, and initiates/stops serial logging.
 
 ### 3.2 Telemetry Summary Bar (Tab 1)
 Displays live abstracted hardware parameters captured from device serial boot logs:

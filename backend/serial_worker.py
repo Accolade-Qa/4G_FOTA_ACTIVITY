@@ -18,6 +18,27 @@ from backend.models import LoginPacketInfo
 logger = logging.getLogger(__name__)
 
 
+class PortInfoDetail:
+    """Dataclass storing COM port hardware information and Bluetooth classification."""
+
+    def __init__(self, device: str, description: str, hwid: str):
+        self.device = device
+        self.description = description or ""
+        self.hwid = hwid or ""
+        desc_lower = self.description.lower()
+        hwid_lower = self.hwid.lower()
+        self.is_bluetooth = ("bluetooth" in desc_lower or "bth" in desc_lower or "bthenum" in hwid_lower or "bth" in hwid_lower)
+
+    @property
+    def display_text(self) -> str:
+        short_desc = self.description
+        if "(" in short_desc and ")" in short_desc:
+            short_desc = short_desc.split("(")[0].strip()
+        if self.is_bluetooth:
+            return f"{self.device} [Bluetooth] - {short_desc or 'Bluetooth Link'}"
+        return f"{self.device} [Serial] - {short_desc or 'Serial Port'}"
+
+
 class SerialWorker(QThread):
     """Background QThread listening to serial COM port data streams."""
 
@@ -37,6 +58,15 @@ class SerialWorker(QThread):
         self._serial_inst: Optional[serial.Serial] = None
         self._captured_login = False
         self.accumulator = TelemetryAccumulator()
+
+    @staticmethod
+    def list_detailed_ports() -> List[PortInfoDetail]:
+        """Discover connected COM ports and classify physical Serial vs Bluetooth ports."""
+        ports = serial.tools.list_ports.comports()
+        result = []
+        for p in ports:
+            result.append(PortInfoDetail(device=p.device, description=p.description, hwid=p.hwid))
+        return result
 
     @staticmethod
     def list_available_ports() -> List[str]:

@@ -38,10 +38,11 @@ from backend.path_resolver import get_base_dir
 from backend.config import Config
 from backend.models import LoginPacketInfo
 from backend.orchestrator import FotaOrchestrator
-from backend.serial_worker import SerialWorker
+from backend.serial_worker import SerialWorker, PortInfoDetail
 from backend.message_parser import MessageParser
 from backend.session_logger import SessionLogger
 from ui.styles import LIGHT_THEME_QSS, DARK_THEME_QSS
+from ui.icons import get_icon
 from ui.widgets import (
     ApiSyncWorker,
     AuditHistoryTableWidget,
@@ -118,23 +119,28 @@ class MinimalFotaWindow(QMainWindow):
         self.combo_states.currentTextChanged.connect(self._on_state_selected)
 
         self.combo_ports = QComboBox()
-        self.combo_ports.setMinimumWidth(100)
+        self.combo_ports.setMinimumWidth(160)
+        self.combo_ports.currentIndexChanged.connect(self._on_port_selected)
         self._refresh_ports()
 
-        self.btn_refresh = QPushButton("↻")
-        self.btn_refresh.setProperty("class", "btn-icon")
-        self.btn_refresh.setFixedWidth(32)
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_refresh.setIcon(get_icon("refresh_blue"))
+        self.btn_refresh.setProperty("class", "btn-secondary")
+        self.btn_refresh.setMinimumWidth(90)
         self.btn_refresh.setToolTip("Refresh COM ports (Ctrl+R)")
         self.btn_refresh.clicked.connect(self._refresh_ports)
 
-        self.btn_theme = QPushButton("🌙")
-        self.btn_theme.setProperty("class", "btn-icon")
-        self.btn_theme.setFixedWidth(32)
+        self.btn_theme = QPushButton("Theme: Light")
+        self.btn_theme.setIcon(get_icon("dark_mode"))
+        self.btn_theme.setProperty("class", "btn-secondary")
+        self.btn_theme.setMinimumWidth(115)
         self.btn_theme.setToolTip("Toggle Dark / Light Theme (Ctrl+T)")
         self.btn_theme.clicked.connect(self._toggle_theme)
 
-        self.btn_toggle = QPushButton("Start")
+        self.btn_toggle = QPushButton("Start Engine")
+        self.btn_toggle.setIcon(get_icon("play_arrow_white"))
         self.btn_toggle.setProperty("class", "btn-primary")
+        self.btn_toggle.setMinimumWidth(120)
         self.btn_toggle.clicked.connect(self._toggle_engine)
 
         hdr_box.addWidget(title)
@@ -257,6 +263,9 @@ class MinimalFotaWindow(QMainWindow):
         # Global Keyboard Shortcuts
         self._setup_shortcuts()
 
+        # Evaluate initial COM port selection after UI elements are created
+        self._on_port_selected()
+
     def _setup_shortcuts(self) -> None:
         """Setup keyboard shortcuts for fast engineering workflows."""
         sc_clear = QShortcut(QKeySequence("Ctrl+K"), self)
@@ -312,28 +321,32 @@ class MinimalFotaWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_orchestrator_status_update(self, text: str) -> None:
-        """Parse orchestrator status strings into dynamic, concise stage badges and cards."""
+        """Parse orchestrator status strings into dynamic stage badges and cards with Google Material Icons."""
         if not text:
             return
 
         t_upper = text.upper()
         if "DOWNLOADING" in t_upper or "IN-PROGRESS" in t_upper or "PROGRESS:" in t_upper:
-            self._update_status_card("⚡ IN-PROGRESS", text, level="info")
+            self._update_status_card("IN-PROGRESS", text, level="info", icon_name="sync")
         elif "COMPLETED" in t_upper or "ACCEPTED" in t_upper or "SUCCESS" in t_upper:
-            self._update_status_card("🎉 COMPLETED", text, level="success")
+            self._update_status_card("COMPLETED", text, level="success", icon_name="check_circle")
         elif "ABORTED" in t_upper or "FAILED" in t_upper or "CANCELLED" in t_upper:
-            self._update_status_card("⛔ ABORTED", text, level="danger")
+            self._update_status_card("ABORTED", text, level="danger", icon_name="cancel")
         elif "BLOCKED" in t_upper or "NOT FOUND" in t_upper or "WARNING" in t_upper:
-            self._update_status_card("⚠️ WARNING", text, level="warning")
+            self._update_status_card("WARNING", text, level="warning", icon_name="warning")
         elif "SCANNING" in t_upper or "FETCHING" in t_upper:
-            self._update_status_card("📋 SCANNING", text, level="info")
+            self._update_status_card("SCANNING", text, level="info", icon_name="sync")
         else:
-            self._update_status_card("ℹ️ STATUS", text, level="info")
+            self._update_status_card("STATUS", text, level="info", icon_name="info")
 
-    def _update_status_card(self, badge: str, message: str, level: str = "info") -> None:
-        """Update status card badge text, message detail, and QSS class dynamically."""
+    def _update_status_card(self, badge: str, message: str, level: str = "info", icon_name: str = "info") -> None:
+        """Update status card badge text, icon, message detail, and QSS class dynamically."""
+        if not hasattr(self, "lbl_stage_badge") or not hasattr(self, "lbl_msg"):
+            return
         self.lbl_stage_badge.setText(badge)
         self.lbl_msg.setText(message)
+        if hasattr(self, "lbl_card_icon"):
+            self.lbl_card_icon.setPixmap(get_icon(icon_name).pixmap(18, 18))
 
         color_map = {
             "info": "#2563eb",
@@ -352,7 +365,7 @@ class MinimalFotaWindow(QMainWindow):
         val_clean = max(0.0, min(100.0, float(val)))
         self.progress_bar.setValue(int(val_clean * 100))
         self.progress_bar.setFormat(f"FOTA Download Progress: {val_clean:.2f}%")
-        self._update_status_card("⚡ IN-PROGRESS", f"FOTA Downloading: {val_clean:.2f}%", level="info")
+        self._update_status_card("IN-PROGRESS", f"FOTA Downloading: {val_clean:.2f}%", level="info", icon_name="sync")
 
     @pyqtSlot(bool, str)
     def _on_api_sync_complete(self, ok: bool, msg: str) -> None:
@@ -395,13 +408,48 @@ class MinimalFotaWindow(QMainWindow):
             self.orchestrator.process_login_packet(self.orchestrator.current_device, selected_ui_state=state_name)
 
     def _refresh_ports(self) -> None:
-        """Refresh COM ports dropdown."""
+        """Scan and populate COM ports dropdown with physical Serial vs Bluetooth classification."""
+        self.combo_ports.blockSignals(True)
         self.combo_ports.clear()
-        ports = SerialWorker.list_available_ports()
-        if ports:
-            self.combo_ports.addItems(ports)
+        self.detected_ports: List[PortInfoDetail] = SerialWorker.list_detailed_ports()
+
+        if self.detected_ports:
+            for p in self.detected_ports:
+                self.combo_ports.addItem(p.display_text, userData=p)
         else:
-            self.combo_ports.addItem("No Ports")
+            self.combo_ports.addItem("No COM Ports Found", userData=None)
+
+        self.combo_ports.blockSignals(False)
+
+        # Quietly update status card on refresh without triggering Bluetooth warning toasts
+        if self.detected_ports:
+            msg = f"Discovered {len(self.detected_ports)} COM port(s). Select a physical Serial port to begin."
+            self._update_status_card("STATUS", msg, level="info", icon_name="info")
+        else:
+            self._update_status_card("WARNING", "No COM ports detected on workstation.", level="warning", icon_name="warning")
+
+    @pyqtSlot()
+    def _on_port_selected(self) -> None:
+        """Evaluate currently selected COM port and warn if a Bluetooth port is selected."""
+        port_info = self.combo_ports.currentData()
+        if isinstance(port_info, PortInfoDetail):
+            if port_info.is_bluetooth:
+                msg = f"Warning: Selected port {port_info.device} is a Bluetooth port ({port_info.description}). Please select a physical USB/UART Serial port."
+                logger.warning(msg)
+                self._update_status_card("WARNING", msg, level="warning", icon_name="warning")
+                if hasattr(self, "snackbar"):
+                    self.snackbar.show_message(msg, duration_ms=4000)
+                # Auto-reset warning badge back to STATUS after 4 seconds if engine remains offline
+                QTimer.singleShot(4000, self._reset_status_card_default)
+            else:
+                msg = f"Physical Serial Port {port_info.device} selected ({port_info.description}). Click Start Engine to begin."
+                logger.info(msg)
+                self._update_status_card("READY", msg, level="info", icon_name="info")
+
+    def _reset_status_card_default(self) -> None:
+        """Reset status card to default STATUS state if engine is offline."""
+        if not (self.serial_worker and self.serial_worker.isRunning()):
+            self._update_status_card("STATUS", "System initialized and ready.", level="info", icon_name="info")
 
     @pyqtSlot()
     def _toggle_theme(self) -> None:
@@ -409,14 +457,16 @@ class MinimalFotaWindow(QMainWindow):
         self.is_dark_theme = not getattr(self, "is_dark_theme", False)
         if self.is_dark_theme:
             self.setStyleSheet(DARK_THEME_QSS)
-            self.btn_theme.setText("☀️")
+            self.btn_theme.setText("Theme: Dark")
+            self.btn_theme.setIcon(get_icon("light_mode"))
             self.btn_theme.setToolTip("Switch to Light Theme")
-            self.lbl_msg.setText("Dark theme enabled.")
+            self._update_status_card("STATUS", "Dark theme enabled.", level="info", icon_name="info")
         else:
             self.setStyleSheet(LIGHT_THEME_QSS)
-            self.btn_theme.setText("🌙")
+            self.btn_theme.setText("Theme: Light")
+            self.btn_theme.setIcon(get_icon("dark_mode"))
             self.btn_theme.setToolTip("Switch to Dark Theme")
-            self.lbl_msg.setText("Light theme enabled.")
+            self._update_status_card("STATUS", "Light theme enabled.", level="info", icon_name="info")
 
     @pyqtSlot()
     def _toggle_engine(self) -> None:
@@ -427,11 +477,20 @@ class MinimalFotaWindow(QMainWindow):
             self._start_engine()
 
     def _start_engine(self) -> None:
-        """Start serial engine, lock port selection, change UI status to ONLINE, and auto-fire reboot command (*SET#CRST#1#)."""
-        port = self.combo_ports.currentText()
-        if port == "No Ports":
-            port = ""
-        
+        """Start serial engine after validating that a physical Serial port is selected."""
+        port_info = self.combo_ports.currentData()
+        if isinstance(port_info, PortInfoDetail) and port_info.is_bluetooth:
+            msg = f"Cannot Start Engine: {port_info.device} is a Bluetooth port. Please connect and select a physical USB/UART Serial port."
+            logger.warning(msg)
+            self._update_status_card("WARNING", msg, level="warning", icon_name="warning")
+            self.snackbar.show_message(msg, duration_ms=4500)
+            return
+
+        port = port_info.device if isinstance(port_info, PortInfoDetail) else self.combo_ports.currentText().split()[0]
+        if not port or port == "No":
+            self.snackbar.show_message("No valid serial COM port selected.", duration_ms=3000)
+            return
+
         self.serial_worker = SerialWorker(port_name=port, baud_rate=self.config.serial_baud)
         self.serial_worker.raw_log_signal.connect(self._queue_log_line)
         self.serial_worker.progress_signal.connect(self.orchestrator.update_progress)
@@ -446,7 +505,8 @@ class MinimalFotaWindow(QMainWindow):
 
         self.lbl_status.setText(f"● ONLINE ({port} @ {self.config.serial_baud})")
         self.lbl_status.setProperty("class", "status-online")
-        self.btn_toggle.setText("Stop")
+        self.btn_toggle.setText("Stop Engine")
+        self.btn_toggle.setIcon(get_icon("stop_white"))
         self.btn_toggle.setProperty("class", "btn-danger")
 
         self.lbl_status.setStyle(self.lbl_status.style())
@@ -466,8 +526,8 @@ class MinimalFotaWindow(QMainWindow):
     def _on_sleep_event(self, log_line: str) -> None:
         """Handle device sleep and soft shutdown detection signals."""
         msg = "Soft shutdown detected. Monitoring for wake-up boot log..."
-        self._update_status_card("🌙 DEVICE SLEEP", msg, level="warning")
-        self.snackbar.show_message("🌙 Device Sleep / Soft Shutdown Detected!", duration_ms=4000)
+        self._update_status_card("DEVICE SLEEP", msg, level="warning", icon_name="dark_mode")
+        self.snackbar.show_message("Device Sleep / Soft Shutdown Detected!", duration_ms=4000)
 
     def _stop_engine(self) -> None:
         """Stop serial engine and unlock port selection."""
@@ -480,8 +540,12 @@ class MinimalFotaWindow(QMainWindow):
 
         self.lbl_status.setText("● OFFLINE")
         self.lbl_status.setProperty("class", "status-offline")
-        self.btn_toggle.setText("Start")
+        self.btn_toggle.setText("Start Engine")
+        self.btn_toggle.setIcon(get_icon("play_arrow_white"))
         self.btn_toggle.setProperty("class", "btn-primary")
+
+        self.lbl_status.setStyle(self.lbl_status.style())
+        self.btn_toggle.setStyle(self.btn_toggle.style())
 
         self.lbl_status.setStyle(self.lbl_status.style())
         self.btn_toggle.setStyle(self.btn_toggle.style())
