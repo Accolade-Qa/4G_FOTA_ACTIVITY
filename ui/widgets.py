@@ -11,8 +11,9 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 # Add repo root to Python path
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -415,12 +416,18 @@ class ReportingAnalyticsTabWidget(QWidget):
         title = QLabel("📈 FOTA System Executive Analytics & Distribution Report")
         title.setStyleSheet("font-weight: 700; font-size: 10pt;")
 
+        btn_export = QPushButton("📥 Export CSV")
+        btn_export.setProperty("class", "btn-primary")
+        btn_export.setToolTip("Export state matrix distribution and version progression to CSV")
+        btn_export.clicked.connect(self._export_csv)
+
         btn_refresh = QPushButton("↻ Refresh Analytics")
         btn_refresh.setFixedWidth(140)
         btn_refresh.clicked.connect(self.load_analytics)
 
         ctrl_bar.addWidget(title)
         ctrl_bar.addStretch()
+        ctrl_bar.addWidget(btn_export)
         ctrl_bar.addWidget(btn_refresh)
         layout.addLayout(ctrl_bar)
 
@@ -497,6 +504,46 @@ class ReportingAnalyticsTabWidget(QWidget):
             st_val = str(r.get("status", "")).upper()
             self.table_versions.setItem(idx, 3, QTableWidgetItem(st_val))
 
+    def _export_csv(self) -> None:
+        """Export analytics tables data to a combined CSV report file."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Analytics Report to CSV", "results/fota_analytics_report.csv", "CSV Files (*.csv)"
+        )
+        if not file_path:
+            return
+
+        try:
+            import csv
+            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+            with open(file_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                
+                # Section 1: State Server Execution Summary
+                writer.writerow(["=== STATE SERVER EXECUTION MATRIX DISTRIBUTION ==="])
+                writer.writerow(["State Name", "Total Tests", "Completed", "Pass Rate"])
+                for r in range(self.table_states.rowCount()):
+                    row_data = [
+                        self.table_states.item(r, c).text() if self.table_states.item(r, c) else ""
+                        for c in range(4)
+                    ]
+                    writer.writerow(row_data)
+
+                writer.writerow([])  # Blank row separator
+
+                # Section 2: Firmware Version Progression Breakdown
+                writer.writerow(["=== FIRMWARE VERSION PROGRESSION BREAKDOWN ==="])
+                writer.writerow(["Initial Version", "Target Version", "Attempts", "Status"])
+                for r in range(self.table_versions.rowCount()):
+                    row_data = [
+                        self.table_versions.item(r, c).text() if self.table_versions.item(r, c) else ""
+                        for c in range(4)
+                    ]
+                    writer.writerow(row_data)
+
+            logging.info("Exported analytics report to %s", file_path)
+        except Exception as err:
+            logging.error("Failed to export analytics report CSV: %s", err)
+
 
 class StageProgressionWidget(QFrame):
     """Dedicated 10-Stage Progression Bar Widget displaying live FOTA stage status."""
@@ -508,49 +555,15 @@ class StageProgressionWidget(QFrame):
         "S4: Audit Report",
         "S5: 100% Downloaded",
         "S6: Device Reboot",
-        "S7: IP1 & Port Set",
-        "S8: IP2 & Port Set",
-        "S9: State OTA Fired",
+        "S7: State OTA Fired",
+        "S8: IP1 & Port Set",
+        "S9: IP2 & Port Set",
         "S10: Config Verified"
     ]
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("StageProgressionWidget")
-        self.setStyleSheet("""
-            QFrame#StageProgressionWidget {
-                background-color: #0b0f19;
-                border: 1px solid #1e293b;
-                border-radius: 8px;
-                padding: 4px;
-            }
-            QLabel {
-                font-size: 7.5pt;
-                font-weight: 600;
-                border-radius: 4px;
-                padding: 4px 2px;
-            }
-            QLabel[class~="stage-waiting"] {
-                background-color: #1e293b;
-                color: #94a3b8;
-                border: 1px solid #334155;
-            }
-            QLabel[class~="stage-running"] {
-                background-color: #78350f;
-                color: #fef08a;
-                border: 1px solid #d97706;
-            }
-            QLabel[class~="stage-passed"] {
-                background-color: #064e3b;
-                color: #a7f3d0;
-                border: 1px solid #16a34a;
-            }
-            QLabel[class~="stage-failed"] {
-                background-color: #7f1d1d;
-                color: #fecaca;
-                border: 1px solid #dc2626;
-            }
-        """)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -584,18 +597,154 @@ class StageProgressionWidget(QFrame):
 
         badge_class = "stage-waiting"
         icon = "⏱"
-        if status_clean in ("RUNNING", "IN_PROGRESS"):
+        if "NOT PRESENT" in str(message).upper() or status_clean in ("NOT PRESENT", "NOT_PRESENT", "SKIPPED"):
+            badge_class = "stage-passed"
+            icon = "🚫"
+            detail = f"\n{icon} NOT PRESENT"
+        elif status_clean in ("RUNNING", "IN_PROGRESS"):
             badge_class = "stage-running"
             icon = "⚡"
+            detail = f"\n{icon} {status_clean}"
         elif status_clean in ("PASSED", "COMPLETED", "OK"):
             badge_class = "stage-passed"
             icon = "✓"
+            detail = f"\n{icon} {status_clean}"
         elif status_clean in ("FAILED", "ABORTED", "ERROR"):
             badge_class = "stage-failed"
             icon = "✕"
+            detail = f"\n{icon} {status_clean}"
+        else:
+            detail = f"\n{icon} {status_clean}"
 
-        detail = f"\n{icon} {status_clean}"
         lbl.setText(f"{name}{detail}")
         lbl.setProperty("class", badge_class)
         lbl.style().unpolish(lbl)
         lbl.style().polish(lbl)
+
+
+class LoginPacketsTableWidget(QWidget):
+    """Interactive table widget displaying all received Login Packets history with CSV export."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._record_counter = 0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # Header Control Toolbar
+        top_bar = QHBoxLayout()
+        self.lbl_count = QLabel("Total Login Packets Received: 0")
+        self.lbl_count.setStyleSheet("font-weight: bold; font-size: 10pt; color: #38bdf8;")
+        top_bar.addWidget(self.lbl_count)
+        top_bar.addStretch()
+
+        self.btn_export = QPushButton("📥 Export CSV")
+        self.btn_export.setProperty("class", "btn-primary")
+        self.btn_export.setToolTip("Export accumulated login packets records to CSV file")
+        self.btn_export.clicked.connect(self._export_csv)
+        top_bar.addWidget(self.btn_export)
+
+        self.btn_clear = QPushButton("🗑️ Clear List")
+        self.btn_clear.setProperty("class", "btn-secondary")
+        self.btn_clear.setToolTip("Clear the login packets history table")
+        self.btn_clear.clicked.connect(self.clear_table)
+        top_bar.addWidget(self.btn_clear)
+
+        layout.addLayout(top_bar)
+
+        # Table Widget
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels([
+            "#", "Date Time", "IMEI", "UIN", "VIN", "Version", "Raw Login Packet"
+        ])
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+
+        self.table.setAlternatingRowColors(True)
+        layout.addWidget(self.table)
+
+    @pyqtSlot(object, str)
+    def add_login_packet(self, info: Any, raw_line: str = "") -> None:
+        """Add a received LoginPacketInfo record to the table."""
+        self._record_counter += 1
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        imei_val = getattr(info, "imei", "") or ""
+        uin_val = getattr(info, "uin", "") or ""
+        vin_val = getattr(info, "vin", "") or ""
+        ver_val = getattr(info, "version", "") or ""
+        iccid_val = getattr(info, "iccid", "") or ""
+
+        raw_display = raw_line.strip() if raw_line.strip() else (
+            f"IMEI:{imei_val}|UIN:{uin_val}|VIN:{vin_val}|VER:{ver_val}|ICCID:{iccid_val}"
+        )
+
+        item_num = QTableWidgetItem(str(self._record_counter))
+        item_time = QTableWidgetItem(now_str)
+        item_imei = QTableWidgetItem(imei_val)
+        item_uin = QTableWidgetItem(uin_val)
+        item_vin = QTableWidgetItem(vin_val)
+        item_ver = QTableWidgetItem(ver_val)
+        item_raw = QTableWidgetItem(raw_display)
+
+        item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_time.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_imei.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_uin.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_vin.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_ver.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.table.setItem(row, 0, item_num)
+        self.table.setItem(row, 1, item_time)
+        self.table.setItem(row, 2, item_imei)
+        self.table.setItem(row, 3, item_uin)
+        self.table.setItem(row, 4, item_vin)
+        self.table.setItem(row, 5, item_ver)
+        self.table.setItem(row, 6, item_raw)
+
+        self.lbl_count.setText(f"Total Login Packets Received: {self._record_counter}")
+
+    def clear_table(self) -> None:
+        """Clear all rows in the login packets table."""
+        self.table.setRowCount(0)
+        self._record_counter = 0
+        self.lbl_count.setText("Total Login Packets Received: 0")
+
+    def _export_csv(self) -> None:
+        """Export table contents to CSV file (exports CSV headers if table is empty)."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Login Packets to CSV", "results/login_packets.csv", "CSV Files (*.csv)"
+        )
+        if not file_path:
+            return
+
+        try:
+            import csv
+            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+            with open(file_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                headers = ["#", "Date Time", "IMEI", "UIN", "VIN", "Version", "Raw Login Packet"]
+                writer.writerow(headers)
+
+                for r in range(self.table.rowCount()):
+                    row_data = [
+                        self.table.item(r, c).text() if self.table.item(r, c) else ""
+                        for c in range(7)
+                    ]
+                    writer.writerow(row_data)
+            logging.info("Exported login packets to %s", file_path)
+        except Exception as err:
+            logging.error("Failed to export login packets CSV: %s", err)

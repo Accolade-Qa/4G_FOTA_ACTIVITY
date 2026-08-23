@@ -42,18 +42,19 @@ class FirmwareResolver:
         return self.validate_version_exists(state_name, version)
 
     def get_state_server_metadata(self, state_name: str) -> Dict[str, Any]:
-        """Retrieve server IP, port, and state OTA metadata for a given state server."""
+        """Retrieve server IP, port, state abbreviation, and state OTA metadata for a given state server."""
         states = self.matrix.get("states", {})
         state_entry = states.get(state_name) or states.get("Default") or {}
         if isinstance(state_entry, dict):
             return {
+                "state_abbreviation": str(state_entry.get("stateAbbreviation", "") or state_entry.get("state_abbreviation", "") or state_entry.get("stateAbbr", "") or state_entry.get("state_abbr", "")),
                 "ip1": str(state_entry.get("govtIp1", "") or state_entry.get("ip1", "") or state_entry.get("primaryIp", "")),
                 "port1": str(state_entry.get("port1", "") or state_entry.get("primaryPort", "")),
                 "ip2": str(state_entry.get("govtIp2", "") or state_entry.get("ip2", "") or state_entry.get("secondaryIp", "")),
                 "port2": str(state_entry.get("port2", "") or state_entry.get("secondaryPort", "")),
                 "state_enable": str(state_entry.get("stateEnable", "") or state_entry.get("state_enabled_ota", "")),
             }
-        return {"ip1": "", "port1": "", "ip2": "", "port2": "", "state_enable": ""}
+        return {"state_abbreviation": "", "ip1": "", "port1": "", "ip2": "", "port2": "", "state_enable": ""}
 
     def _get_raw_versions_list(self, state_name: str) -> List[Any]:
         states = self.matrix.get("states", {})

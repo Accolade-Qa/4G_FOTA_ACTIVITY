@@ -247,8 +247,10 @@ class FotaApiClient:
                     ip2 = item.get("govtIp2") or item.get("ip2") or item.get("secondaryIp") or ""
                     port2 = item.get("port2") if item.get("port2") is not None else item.get("secondaryPort")
                     state_enable = item.get("stateEnable") or item.get("state_enabled_ota") or item.get("stateEnabledOta") or ""
+                    state_abbr = item.get("stateAbbreviation") or item.get("state_abbreviation") or item.get("stateAbbr") or item.get("state_abbr") or ""
 
                     parsed_matrix[state_name] = {
+                        "stateAbbreviation": str(state_abbr),
                         "govtIp1": str(ip1),
                         "port1": str(port1) if port1 is not None else "",
                         "govtIp2": str(ip2),

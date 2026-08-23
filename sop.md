@@ -97,10 +97,10 @@ Dedicated visual widget displaying 10 sequential execution stage badges with col
 4. `S4: Audit Report`: Persistence into CSV, JSON, and session logs.
 5. `S5: 100% Downloaded`: Download percentage reaches 100.00%.
 6. `S6: Device Reboot`: Post-download reboot/reset log line verification (120s window).
-7. `S7: IP1 & Port Set`: Primary Server CHTP verification (`STATUS#SET#CHTP#...#OK#`).
-8. `S8: IP2 & Port Set`: Secondary Server CIP1 verification (`STATUS#SET#CIP1#...#OK#`).
-9. `S9: State OTA Fired`: SWEMP State Enabled OTA verification (`STATUS#SET#SWEMP#...#OK#`).
-10. `S10: Config Verified`: Post-upgrade config integrity vs pre-upgrade snapshot.
+7. `S7: State OTA Fired`: SWEMP State Enabled OTA verification (`STATUS#SET#SWEMP#...#OK#`). *If already set on device, logs `ALREADY SET`, displays `✓ ALREADY SET` on badge card, and passes stage immediately without waiting. If not in `servers.json`, displays `🚫 NOT PRESENT`.*
+8. `S8: IP1 & Port Set`: Primary Server CHTP verification (`STATUS#SET#CHTP#...#OK#`). *If log shows `255.255.255.255:65535` unconfigured state, waits for set response. If actual IP is already configured on device, logs `ALREADY SET`, displays `✓ ALREADY SET` on badge card, and passes stage immediately.*
+9. `S9: IP2 & Port Set`: Secondary Server CIP1 verification (`STATUS#SET#CIP1#...#OK#`). *If log shows `255.255.255.255:65535` unconfigured state, waits for set response. If actual IP is already configured on device, logs `ALREADY SET`, displays `✓ ALREADY SET` on badge card, and passes stage immediately.*
+10. `S10: Config Verified`: Post-upgrade config integrity vs pre-upgrade snapshot & 55AA Login Packet version match.
 
 ### 3.5 Enterprise Status Banner Card
 Dynamic stage card with background highlights:
@@ -134,6 +134,12 @@ Dynamic stage card with background highlights:
 ### 4.2 Tab 3: Analytics & Reporting (`ReportingAnalyticsTabWidget`)
 - **State Server Matrix Distribution**: Execution counts and pass rates per state server.
 - **Firmware Version Progression Breakdown**: Tracks version transitions and attempt counts.
+- **`📥 Export CSV` Button**: Exports combined state distribution matrix and version progression breakdown report to CSV (`results/fota_analytics_report.csv`).
+
+### 4.3 Tab 4: Login Packets (`LoginPacketsTableWidget`)
+- **Real-Time Login Packet Capture**: Automatically records every login packet received from serial logs (`55AA` GSM_TX packets or key-value login packets).
+- **Detailed Table Columns**: `#` (Sequential Record Number), `Date Time` (Millisecond timestamp), `IMEI`, `UIN`, `VIN`, `Version`, and `Raw Login Packet`.
+- **`📥 Export CSV` Button**: Exports all captured login packet records to CSV files (`results/login_packets.csv`).
 
 ---
 

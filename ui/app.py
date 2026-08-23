@@ -48,6 +48,7 @@ from ui.widgets import (
     CommandHistoryLineEdit,
     ConsoleTabWidget,
     InteractiveTerminalConsole,
+    LoginPacketsTableWidget,
     ReportingAnalyticsTabWidget,
     SnackbarWidget,
     StageProgressionWidget,
@@ -245,6 +246,10 @@ class MinimalFotaWindow(QMainWindow):
         # --- TAB 3: Executive Analytics & Deep Insights ---
         self.analytics_tab = ReportingAnalyticsTabWidget(self.config)
         self.tab_widget.addTab(self.analytics_tab, "📈 Analytics & Reporting")
+
+        # --- TAB 4: Received Login Packets History ---
+        self.login_packets_tab = LoginPacketsTableWidget()
+        self.tab_widget.addTab(self.login_packets_tab, "📦 Login Packets")
 
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tab_widget, stretch=1)
@@ -572,8 +577,14 @@ class MinimalFotaWindow(QMainWindow):
             self.snackbar.show_message(toast_text, duration_ms=3000)
 
     def _queue_log_line(self, line: str) -> None:
-        """Queue incoming serial line for batch flushing, inspect for CIP2 server verification, and parse real-time progress."""
+        """Queue incoming serial line for batch flushing, inspect for login packets, CIP2 server verification, and parse real-time progress."""
         self._log_buffer.append(line)
+
+        # Inspect for Login Packet in raw line (e.g. 55AA or Key-Value login packet)
+        pkt = MessageParser.parse_login_packet(line)
+        if pkt and hasattr(self, "login_packets_tab"):
+            self.login_packets_tab.add_login_packet(pkt, line)
+
         tot_size = self.orchestrator.total_fota_file_size if self.orchestrator else 0
         prog = MessageParser.parse_download_progress(line, total_file_size=tot_size)
         if prog is not None and self.orchestrator:

@@ -42,9 +42,9 @@ class MessageParser:
     CIP2_PATTERN = re.compile(r"(?:CIP2|CIP\s*2|IP2|MQTT\s*Server|SERVER2|SERVER\s*2)[:=,\s]+([A-Za-z0-9._-]+)", re.IGNORECASE)
     PLA_SLEEP_PATTERN = re.compile(r"\[PLA\]\s*SLEEP\s+(\d+)", re.IGNORECASE)
     CLR_FOTA_OK_PATTERN = re.compile(r"STATUS#CLR#FOTA#OK#(?:(\d{13,15}))?", re.IGNORECASE)
-    CHTP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CHTP#|\*SET#CHTP#|CHTP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CHTP#)([A-Za-z0-9._-]+)[#:\s,]+(\d+)", re.IGNORECASE)
-    CIP1_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP1#|\*SET#CIP1#|CIP1:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP1#)([A-Za-z0-9._-]+)[#:\s,]+(\d+)", re.IGNORECASE)
-    SWEMP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#SWEMP#|\*SET#SWEMP#|SWEMP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#SWEMP#)([A-Za-z0-9._-]+)", re.IGNORECASE)
+    CHTP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CHTP#|\*SET#CHTP#|CHTP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CHTP#|STATUS#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
+    CIP1_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP1#|\*SET#CIP1#|CIP1:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP1#|STATUS#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
+    SWEMP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#SWEMP#|\*SET#SWEMP#|SWEMP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#SWEMP#|STATUS#)([\w.-]+)", re.IGNORECASE)
     REBOOT_PATTERNS = [
         re.compile(r"synchronized\s+suspend\s+ok", re.IGNORECASE),
         re.compile(r"GSM\s+soft\s+shutdown\s+pass", re.IGNORECASE),
@@ -254,6 +254,12 @@ class MessageParser:
             port = match.group(2).strip() if match.group(2) else ""
             return ip, port
         return None
+
+    @classmethod
+    def is_unconfigured_ip(cls, ip_str: str) -> bool:
+        """Check if an IP string represents unconfigured default factory state (255.255.255.255 or 0.0.0.0)."""
+        clean = (ip_str or "").strip()
+        return not clean or clean in ("255.255.255.255", "0.0.0.0", "65535", "-", "none", "null")
 
     @classmethod
     def parse_swemp_state_ota(cls, line: str) -> Optional[str]:

@@ -402,52 +402,132 @@ class FotaOrchestrator(QObject):
                 self.stage_states[6] = "PASSED"
                 self.stage_signal.emit(6, "PASSED", "Post-installation device reboot/reset detected (120s window active)")
                 self.stage_states[7] = "RUNNING"
-                self.stage_signal.emit(7, "RUNNING", "Validating Primary Server CHTP IP1 & Port1...")
+                self.stage_signal.emit(7, "RUNNING", "Validating SWEMP State Enabled OTA...")
 
-        # Stage 7: Primary Server CHTP IP1 & Port1 Verification (*SET#CHTP#<ip>#<port>#)
-        if self.reboot_detected and not self.ip1_verified:
-            chtp_tuple = MessageParser.parse_chtp_primary_ip_port(line)
-            if chtp_tuple or "STATUS#SET#CHTP#" in line or ("CHTP" in line and ("." in line or ":" in line)):
-                self.ip1_verified = True
-                meta = self.resolver.get_state_server_metadata(self.current_device.state if self.current_device else "")
-                target_ip = meta.get("ip1") or (chtp_tuple[0] if chtp_tuple else "")
-                target_port = meta.get("port1") or (chtp_tuple[1] if chtp_tuple else "")
-                msg = f"Primary CHTP IP1 ({target_ip}:{target_port}) verified"
-                logger.info(msg)
+        meta = self.resolver.get_state_server_metadata(self.current_device.state if self.current_device else "")
+        has_ip1 = bool(meta.get("ip1") and str(meta.get("ip1")).strip())
+        has_ip2 = bool(meta.get("ip2") and str(meta.get("ip2")).strip())
+        has_state_enable = bool(meta.get("state_enable") and str(meta.get("state_enable")).strip())
+
+        # Stage 7: SWEMP State Enabled OTA Verification (*SET#SWEMP#<state>#)
+        if self.reboot_detected and not self.state_ota_verified:
+            if not has_state_enable:
+                self.state_ota_verified = True
+                msg = "NOT PRESENT (State Enabled OTA not configured in servers.json matrix)"
+                logger.info("Stage 7: %s. Stage marked NOT PRESENT and passed.", msg)
                 self.stage_states[7] = "PASSED"
                 self.stage_signal.emit(7, "PASSED", msg)
                 self.stage_states[8] = "RUNNING"
-                self.stage_signal.emit(8, "RUNNING", "Waiting for Secondary Server CIP1 IP2 & Port2...")
+                self.stage_signal.emit(8, "RUNNING", "Validating Primary Server CHTP IP1 & Port1...")
+            else:
+                swemp_code = MessageParser.parse_swemp_state_ota(line)
+                target_state_cmd = str(meta.get("state_enable", "")).strip()
+                
+                if swemp_code or "SWEMP" in line:
+                    if "STATUS#SET#SWEMP#" in line or "*SET#SWEMP#" in line:
+                        self.state_ota_verified = True
+                        state_enable_cmd = target_state_cmd or swemp_code or "SWEMP"
+                        msg = f"State Enabled OTA ({state_enable_cmd}) verified active"
+                        logger.info("Stage 7: %s", msg)
+                        self.stage_states[7] = "PASSED"
+                        self.stage_signal.emit(7, "PASSED", msg)
+                        self.stage_states[8] = "RUNNING"
+                        self.stage_signal.emit(8, "RUNNING", "Validating Primary Server CHTP IP1 & Port1...")
+                    elif swemp_code:
+                        self.state_ota_verified = True
+                        msg = f"ALREADY SET (State Enabled OTA {swemp_code} already configured on device)"
+                        logger.info("Stage 7: %s. Passed without waiting for set command.", msg)
+                        self.stage_states[7] = "PASSED"
+                        self.stage_signal.emit(7, "PASSED", msg)
+                        self.stage_states[8] = "RUNNING"
+                        self.stage_signal.emit(8, "RUNNING", "Validating Primary Server CHTP IP1 & Port1...")
 
-        # Stage 8: Secondary Server CIP1 IP2 & Port2 Verification (*SET#CIP1#<ip>#<port>#)
-        if self.ip1_verified and not self.ip2_verified:
-            cip1_tuple = MessageParser.parse_cip1_secondary_ip_port(line)
-            if cip1_tuple or "STATUS#SET#CIP1#" in line or ("CIP1" in line and ("." in line or ":" in line)):
-                self.ip2_verified = True
-                meta = self.resolver.get_state_server_metadata(self.current_device.state if self.current_device else "")
-                target_ip2 = meta.get("ip2") or (cip1_tuple[0] if cip1_tuple else "")
-                target_port2 = meta.get("port2") or (cip1_tuple[1] if cip1_tuple else "")
-                msg = f"Secondary CIP1 IP2 ({target_ip2}:{target_port2}) verified"
-                logger.info(msg)
+        # Stage 8: Primary Server CHTP IP1 & Port1 Verification (*SET#CHTP#<ip>#<port>#)
+        if self.state_ota_verified and not self.ip1_verified:
+            if not has_ip1:
+                self.ip1_verified = True
+                msg = "NOT PRESENT (Primary IP1/Port1 not configured in servers.json matrix)"
+                logger.info("Stage 8: %s. Stage marked NOT PRESENT and passed.", msg)
                 self.stage_states[8] = "PASSED"
                 self.stage_signal.emit(8, "PASSED", msg)
                 self.stage_states[9] = "RUNNING"
-                self.stage_signal.emit(9, "RUNNING", "Waiting for SWEMP State Enabled OTA...")
+                self.stage_signal.emit(9, "RUNNING", "Validating Secondary Server CIP1 IP2 & Port2...")
+            else:
+                target_ip = str(meta.get("ip1", "")).strip()
+                target_port = str(meta.get("port1", "")).strip()
+                chtp_tuple = MessageParser.parse_chtp_primary_ip_port(line)
 
-        # Stage 9: SWEMP State Enabled OTA Verification (*SET#SWEMP#<state>#)
-        if self.ip2_verified and not self.state_ota_verified:
-            swemp_code = MessageParser.parse_swemp_state_ota(line)
-            if swemp_code or "STATUS#SET#SWEMP#" in line or "SWEMP" in line:
-                self.state_ota_verified = True
-                meta = self.resolver.get_state_server_metadata(self.current_device.state if self.current_device else "")
-                state_enable_cmd = meta.get("state_enable") or swemp_code or "SWEMP"
-                msg = f"State Enabled OTA ({state_enable_cmd}) verified active"
-                logger.info(msg)
+                # Check if response line shows unconfigured default factory state 255.255.255.255
+                is_255_chtp = "255.255.255.255" in line or (chtp_tuple and MessageParser.is_unconfigured_ip(chtp_tuple[0]))
+
+                if is_255_chtp:
+                    # Unconfigured 255.255.255.255 state -> Must wait for set command response (*SET#CHTP#)
+                    logger.debug("Stage 8: CHTP unconfigured 255.255.255.255 detected. Waiting for set command response...")
+                elif chtp_tuple or ("CHTP" in line and ("." in line or ":" in line)):
+                    parsed_ip = chtp_tuple[0] if chtp_tuple else ""
+                    parsed_port = chtp_tuple[1] if chtp_tuple else ""
+
+                    if "STATUS#SET#CHTP#" in line or "*SET#CHTP#" in line:
+                        self.ip1_verified = True
+                        msg = f"Primary CHTP IP1 ({parsed_ip or target_ip}:{parsed_port or target_port}) verified"
+                        logger.info("Stage 8: %s", msg)
+                        self.stage_states[8] = "PASSED"
+                        self.stage_signal.emit(8, "PASSED", msg)
+                        self.stage_states[9] = "RUNNING"
+                        self.stage_signal.emit(9, "RUNNING", "Validating Secondary Server CIP1 IP2 & Port2...")
+                    elif not MessageParser.is_unconfigured_ip(parsed_ip or target_ip):
+                        self.ip1_verified = True
+                        msg = f"ALREADY SET (Primary CHTP IP1 {parsed_ip or target_ip}:{parsed_port or target_port} already configured on device)"
+                        logger.info("Stage 8: %s. Passed without waiting for set command.", msg)
+                        self.stage_states[8] = "PASSED"
+                        self.stage_signal.emit(8, "PASSED", msg)
+                        self.stage_states[9] = "RUNNING"
+                        self.stage_signal.emit(9, "RUNNING", "Validating Secondary Server CIP1 IP2 & Port2...")
+
+        # Stage 9: Secondary Server CIP1 IP2 & Port2 Verification (*SET#CIP1#<ip>#<port>#)
+        if self.ip1_verified and not self.ip2_verified:
+            if not has_ip2:
+                self.ip2_verified = True
+                msg = "NOT PRESENT (Secondary IP2/Port2 not configured in servers.json matrix)"
+                logger.info("Stage 9: %s. Stage marked NOT PRESENT and passed.", msg)
                 self.stage_states[9] = "PASSED"
                 self.stage_signal.emit(9, "PASSED", msg)
                 self.stage_states[10] = "RUNNING"
                 self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
                 self._evaluate_stage10_completion(line)
+            else:
+                target_ip2 = str(meta.get("ip2", "")).strip()
+                target_port2 = str(meta.get("port2", "")).strip()
+                cip1_tuple = MessageParser.parse_cip1_secondary_ip_port(line)
+
+                # Check if response line shows unconfigured default factory state 255.255.255.255
+                is_255_cip = "255.255.255.255" in line or (cip1_tuple and MessageParser.is_unconfigured_ip(cip1_tuple[0]))
+
+                if is_255_cip:
+                    # Unconfigured 255.255.255.255 state -> Must wait for set command response (*SET#CIP1#)
+                    logger.debug("Stage 9: CIP1 unconfigured 255.255.255.255 detected. Waiting for set command response...")
+                elif cip1_tuple or ("CIP1" in line and ("." in line or ":" in line)):
+                    parsed_ip2 = cip1_tuple[0] if cip1_tuple else ""
+                    parsed_port2 = cip1_tuple[1] if cip1_tuple else ""
+
+                    if "STATUS#SET#CIP1#" in line or "*SET#CIP1#" in line:
+                        self.ip2_verified = True
+                        msg = f"Secondary CIP1 IP2 ({parsed_ip2 or target_ip2}:{parsed_port2 or target_port2}) verified"
+                        logger.info("Stage 9: %s", msg)
+                        self.stage_states[9] = "PASSED"
+                        self.stage_signal.emit(9, "PASSED", msg)
+                        self.stage_states[10] = "RUNNING"
+                        self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
+                        self._evaluate_stage10_completion(line)
+                    elif not MessageParser.is_unconfigured_ip(parsed_ip2 or target_ip2):
+                        self.ip2_verified = True
+                        msg = f"ALREADY SET (Secondary CIP1 IP2 {parsed_ip2 or target_ip2}:{parsed_port2 or target_port2} already configured on device)"
+                        logger.info("Stage 9: %s. Passed without waiting for set command.", msg)
+                        self.stage_states[9] = "PASSED"
+                        self.stage_signal.emit(9, "PASSED", msg)
+                        self.stage_states[10] = "RUNNING"
+                        self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
+                        self._evaluate_stage10_completion(line)
 
     def _evaluate_stage10_completion(self, current_log_line: str = "") -> None:
         """Validate Stage 10 (Post-Upgrade 55AA Login Packet & Config Integrity vs Snapshot)."""

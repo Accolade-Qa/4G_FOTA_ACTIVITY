@@ -287,6 +287,45 @@ QPushButton.snackbar-close:hover {
     color: #ffffff;
 }
 
+/* Stage Progression Bar - Light Theme */
+QFrame#StageProgressionWidget {
+    background-color: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QFrame#StageProgressionWidget QLabel {
+    font-size: 7.5pt;
+    font-weight: 600;
+    border-radius: 4px;
+    padding: 4px 2px;
+}
+
+QFrame#StageProgressionWidget QLabel[class~="stage-waiting"] {
+    background-color: #f1f5f9;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+}
+
+QFrame#StageProgressionWidget QLabel[class~="stage-running"] {
+    background-color: #fef9c3;
+    color: #854d0e;
+    border: 1px solid #fde047;
+}
+
+QFrame#StageProgressionWidget QLabel[class~="stage-passed"] {
+    background-color: #dcfce7;
+    color: #15803d;
+    border: 1px solid #86efac;
+}
+
+QFrame#StageProgressionWidget QLabel[class~="stage-failed"] {
+    background-color: #fee2e2;
+    color: #b91c1c;
+    border: 1px solid #fca5a5;
+}
+
 /* Scrollbars */
 QScrollBar:vertical {
     background: #f8fafc;
@@ -607,6 +646,45 @@ QPushButton.snackbar-close {
 
 QPushButton.snackbar-close:hover {
     color: #ffffff;
+}
+
+/* Stage Progression Bar - Cyber Dark Theme */
+QFrame#StageProgressionWidget {
+    background-color: #0b0f19;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QFrame#StageProgressionWidget QLabel {
+    font-size: 7.5pt;
+    font-weight: 600;
+    border-radius: 4px;
+    padding: 4px 2px;
+}
+
+QFrame#StageProgressionWidget QLabel[class~="stage-waiting"] {
+    background-color: #1e293b;
+    color: #94a3b8;
+    border: 1px solid #334155;
+}
+
+QFrame#StageProgressionWidget QLabel[class~="stage-running"] {
+    background-color: #78350f;
+    color: #fef08a;
+    border: 1px solid #d97706;
+}
+
+QFrame#StageProgressionWidget QLabel[class~="stage-passed"] {
+    background-color: #064e3b;
+    color: #a7f3d0;
+    border: 1px solid #16a34a;
+}
+
+QFrame#StageProgressionWidget QLabel[class~="stage-failed"] {
+    background-color: #7f1d1d;
+    color: #fecaca;
+    border: 1px solid #dc2626;
 }
 
 /* Scrollbars */
