@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 )
 
 from backend.orchestrator import FotaOrchestrator
+from ui.icons import get_icon
 
 logger = logging.getLogger(__name__)
 
@@ -193,13 +194,16 @@ class AuditHistoryTableWidget(QWidget):
         self.combo_status_filter.addItems(["All Statuses", "COMPLETED", "ABORTED", "IN_PROGRESS", "BLOCKED"])
         self.combo_status_filter.currentTextChanged.connect(self._apply_filters)
 
-        btn_refresh = QPushButton("↻ Refresh")
-        btn_refresh.setFixedWidth(90)
+        btn_refresh = QPushButton("Refresh")
+        btn_refresh.setIcon(get_icon("refresh_blue"))
+        btn_refresh.setProperty("class", "btn-secondary")
+        btn_refresh.setFixedWidth(100)
         btn_refresh.clicked.connect(self.load_history)
 
-        btn_export = QPushButton("📥 Export CSV")
+        btn_export = QPushButton("Export CSV")
+        btn_export.setIcon(get_icon("download_white"))
         btn_export.setProperty("class", "btn-primary")
-        btn_export.setFixedWidth(110)
+        btn_export.setFixedWidth(115)
         btn_export.clicked.connect(self._export_csv)
 
         ctrl_bar.addWidget(self.input_search, stretch=1)
@@ -416,13 +420,16 @@ class ReportingAnalyticsTabWidget(QWidget):
         title = QLabel("📈 FOTA System Executive Analytics & Distribution Report")
         title.setStyleSheet("font-weight: 700; font-size: 10pt;")
 
-        btn_export = QPushButton("📥 Export CSV")
+        btn_export = QPushButton("Export CSV")
+        btn_export.setIcon(get_icon("download_white"))
         btn_export.setProperty("class", "btn-primary")
         btn_export.setToolTip("Export state matrix distribution and version progression to CSV")
         btn_export.clicked.connect(self._export_csv)
 
-        btn_refresh = QPushButton("↻ Refresh Analytics")
-        btn_refresh.setFixedWidth(140)
+        btn_refresh = QPushButton("Refresh Analytics")
+        btn_refresh.setIcon(get_icon("refresh_blue"))
+        btn_refresh.setProperty("class", "btn-secondary")
+        btn_refresh.setFixedWidth(150)
         btn_refresh.clicked.connect(self.load_analytics)
 
         ctrl_bar.addWidget(title)
@@ -640,13 +647,15 @@ class LoginPacketsTableWidget(QWidget):
         top_bar.addWidget(self.lbl_count)
         top_bar.addStretch()
 
-        self.btn_export = QPushButton("📥 Export CSV")
+        self.btn_export = QPushButton("Export CSV")
+        self.btn_export.setIcon(get_icon("download_white"))
         self.btn_export.setProperty("class", "btn-primary")
         self.btn_export.setToolTip("Export accumulated login packets records to CSV file")
         self.btn_export.clicked.connect(self._export_csv)
         top_bar.addWidget(self.btn_export)
 
-        self.btn_clear = QPushButton("🗑️ Clear List")
+        self.btn_clear = QPushButton("Clear List")
+        self.btn_clear.setIcon(get_icon("delete_slate"))
         self.btn_clear.setProperty("class", "btn-secondary")
         self.btn_clear.setToolTip("Clear the login packets history table")
         self.btn_clear.clicked.connect(self.clear_table)
@@ -688,9 +697,10 @@ class LoginPacketsTableWidget(QWidget):
         ver_val = getattr(info, "version", "") or ""
         iccid_val = getattr(info, "iccid", "") or ""
 
-        raw_display = raw_line.strip() if raw_line.strip() else (
-            f"IMEI:{imei_val}|UIN:{uin_val}|VIN:{vin_val}|VER:{ver_val}|ICCID:{iccid_val}"
-        )
+        raw_pkt = getattr(info, "raw_packet", "") or ""
+        raw_display = raw_pkt.strip() if raw_pkt.strip() else raw_line.strip()
+        if not raw_display and (imei_val or uin_val):
+            raw_display = f"55AA,1,2,{imei_val},{uin_val},{vin_val},{ver_val}"
 
         item_num = QTableWidgetItem(str(self._record_counter))
         item_time = QTableWidgetItem(now_str)

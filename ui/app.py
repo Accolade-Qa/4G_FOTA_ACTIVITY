@@ -137,7 +137,7 @@ class MinimalFotaWindow(QMainWindow):
         self.btn_theme.setToolTip("Toggle Dark / Light Theme (Ctrl+T)")
         self.btn_theme.clicked.connect(self._toggle_theme)
 
-        self.btn_toggle = QPushButton("Start Engine")
+        self.btn_toggle = QPushButton("Start")
         self.btn_toggle.setIcon(get_icon("play_arrow_white"))
         self.btn_toggle.setProperty("class", "btn-primary")
         self.btn_toggle.setMinimumWidth(120)
@@ -180,8 +180,9 @@ class MinimalFotaWindow(QMainWindow):
         self.lbl_ver = self._add_stat(tel_box, "FIRMWARE", "---")
 
         btn_clear_info = QPushButton("Clear Info")
+        btn_clear_info.setIcon(get_icon("delete_slate"))
         btn_clear_info.setProperty("class", "btn-secondary")
-        btn_clear_info.setFixedWidth(85)
+        btn_clear_info.setFixedWidth(95)
         btn_clear_info.setToolTip("Clear captured device telemetry")
         btn_clear_info.clicked.connect(self._clear_device_telemetry)
         tel_box.addWidget(btn_clear_info, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -195,7 +196,7 @@ class MinimalFotaWindow(QMainWindow):
         self.progress_bar.setFormat("FOTA Download Progress: 0.00%")
         term_layout.addWidget(self.progress_bar)
 
-        # 10-Stage Progression Bar Widget
+        # 10-Stage Progression Bar Widget (Kept clean without icons to prevent UI distortion)
         self.stage_widget = StageProgressionWidget()
         term_layout.addWidget(self.stage_widget)
 
@@ -209,7 +210,7 @@ class MinimalFotaWindow(QMainWindow):
         self.lbl_stage_badge = QLabel("READY")
         self.lbl_stage_badge.setStyleSheet("font-weight: 800; font-size: 8.5pt; color: #2563eb;")
 
-        self.lbl_msg = QLabel("Connect device serial COM port and click Start Engine to initiate FOTA monitoring.")
+        self.lbl_msg = QLabel("Connect device serial COM port and click Start to initiate FOTA monitoring.")
         self.lbl_msg.setStyleSheet("font-size: 9pt; font-weight: 600;")
         self.lbl_msg.setWordWrap(True)
 
@@ -229,12 +230,15 @@ class MinimalFotaWindow(QMainWindow):
         self.input_cmd.returnPressed.connect(self._on_send_command)
 
         self.btn_send_cmd = QPushButton("Send Command")
-        self.btn_send_cmd.setFixedWidth(120)
+        self.btn_send_cmd.setIcon(get_icon("send_white"))
+        self.btn_send_cmd.setProperty("class", "btn-primary")
+        self.btn_send_cmd.setFixedWidth(130)
         self.btn_send_cmd.clicked.connect(self._on_send_command)
 
         self.btn_clear_log = QPushButton("Clear Log")
+        self.btn_clear_log.setIcon(get_icon("delete_slate"))
         self.btn_clear_log.setProperty("class", "btn-secondary")
-        self.btn_clear_log.setFixedWidth(90)
+        self.btn_clear_log.setFixedWidth(95)
         self.btn_clear_log.setToolTip("Clear terminal console (Ctrl+K / Ctrl+L)")
         self.btn_clear_log.clicked.connect(self.console.clear)
 
@@ -243,19 +247,19 @@ class MinimalFotaWindow(QMainWindow):
         cmd_box.addWidget(self.btn_clear_log)
         term_layout.addLayout(cmd_box)
 
-        self.tab_widget.addTab(tab_terminal, "🖥️ Live Serial Console & Control")
+        self.tab_widget.addTab(tab_terminal, get_icon("terminal_blue"), "Live Serial Console Control")
 
         # --- TAB 2: Execution Audit Log History ---
         self.audit_tab = AuditHistoryTableWidget(self.config)
-        self.tab_widget.addTab(self.audit_tab, "📊 Audit Log History")
+        self.tab_widget.addTab(self.audit_tab, get_icon("history_blue"), "Audit Log History")
 
         # --- TAB 3: Executive Analytics & Deep Insights ---
         self.analytics_tab = ReportingAnalyticsTabWidget(self.config)
-        self.tab_widget.addTab(self.analytics_tab, "📈 Analytics & Reporting")
+        self.tab_widget.addTab(self.analytics_tab, get_icon("analytics_blue"), "Analytics Reporting")
 
         # --- TAB 4: Received Login Packets History ---
         self.login_packets_tab = LoginPacketsTableWidget()
-        self.tab_widget.addTab(self.login_packets_tab, "📦 Login Packets")
+        self.tab_widget.addTab(self.login_packets_tab, get_icon("data_object_blue"), "Login Packets")
 
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tab_widget, stretch=1)
@@ -499,13 +503,13 @@ class MinimalFotaWindow(QMainWindow):
         self.serial_worker.port_status_signal.connect(self._on_port_status)
         self.serial_worker.start()
 
-        # Update UI Controls to ONLINE & Stop Engine
+        # Update UI Controls to ONLINE & Stop
         self.combo_ports.setEnabled(False)
         self.btn_refresh.setEnabled(False)
 
         self.lbl_status.setText(f"● ONLINE ({port} @ {self.config.serial_baud})")
         self.lbl_status.setProperty("class", "status-online")
-        self.btn_toggle.setText("Stop Engine")
+        self.btn_toggle.setText("Stop")
         self.btn_toggle.setIcon(get_icon("stop_white"))
         self.btn_toggle.setProperty("class", "btn-danger")
 
@@ -517,10 +521,15 @@ class MinimalFotaWindow(QMainWindow):
 
     @pyqtSlot(object)
     def _on_login_packet_received(self, info: LoginPacketInfo) -> None:
-        """Forward received login packet to orchestrator with user selected state."""
+        """Forward received telemetry to orchestrator and record genuine 55AA login packets in Tab 4 table."""
         sel_state = self.combo_states.currentText()
         if self.orchestrator:
             self.orchestrator.process_login_packet(info, selected_ui_state=sel_state)
+
+        # Only add genuine 55AA Login Packets to Tab 4 Login Packets table
+        raw_pkt = getattr(info, "raw_packet", "") or ""
+        if raw_pkt.startswith("55AA") or "55AA" in raw_pkt:
+            self.login_packets_tab.add_login_packet(info, raw_pkt)
 
     @pyqtSlot(str)
     def _on_sleep_event(self, log_line: str) -> None:
@@ -540,7 +549,7 @@ class MinimalFotaWindow(QMainWindow):
 
         self.lbl_status.setText("● OFFLINE")
         self.lbl_status.setProperty("class", "status-offline")
-        self.btn_toggle.setText("Start Engine")
+        self.btn_toggle.setText("Start")
         self.btn_toggle.setIcon(get_icon("play_arrow_white"))
         self.btn_toggle.setProperty("class", "btn-primary")
 

@@ -282,50 +282,72 @@ class MessageParser:
 
     @classmethod
     def parse_55aa_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
-        """Parse structured 55AA GSM_TX login packet format:
-        e.g. |55AA,1,2,1786520105,869860080013235,89916450544846812199,ACON4NA022600682337,5.2.6_REL07,AAAAAAAAAAAAAA,...|
-        Indices:
-          0: 55AA (Header)
-          3: Epoch Timestamp
-          4: IMEI
-          5: ICCID
-          6: UIN
-          7: Firmware Version (Current active version)
-          8: VIN
+        """Parse structured GSM Login Packet starting strictly with 55AA,1,2,... and length >= 11:
+        e.g. |55AA,1,2,1787549018,861564069210428,89916441244829541707,ACON4NA082300010428,5.2.9 5th IP,ACCDFV07241580138,...|
         """
         clean_line = cls.strip_ansi(line)
         if not clean_line or "55AA" not in clean_line:
             return None
 
-        match = re.search(r"\|?\s*(55AA\s*,[^\|]+)", clean_line)
+        match = re.search(r"(55AA\s*,[^\|\r\n]+)", clean_line)
         if not match:
             return None
 
-        payload_str = match.group(1).strip()
+        payload_str = match.group(1).strip().rstrip("|").strip()
         parts = [p.strip() for p in payload_str.split(",")]
 
-        if len(parts) >= 9 and parts[0].upper() == "55AA":
-            imei = parts[4]
-            iccid = parts[5]
-            uin = parts[6]
-            version = parts[7]
-            vin = parts[8]
+        # Strictly enforce 55AA,1,2,... GSM login packet format with length >= 11
+        if len(parts) >= 11 and parts[0].upper() == "55AA" and parts[1] == "1" and parts[2] == "2":
+            imei = ""
+            iccid = ""
+            uin = ""
+            version = ""
+            vin = "MAT00000000000000"
 
-            valid_imei = imei if cls.is_valid_imei(imei) else ""
-            valid_uin = uin if cls.is_valid_uin(uin) else ""
-            valid_vin = vin.upper() if cls.is_valid_vin(vin) else "MAT00000000000000"
+            # Parse positional parameters if valid
+            if len(parts) > 4 and cls.is_valid_imei(parts[4]):
+                imei = parts[4]
+            if len(parts) > 5 and len(parts[5]) in (18, 19, 20) and parts[5].isdigit():
+                iccid = parts[5]
+            if len(parts) > 6 and cls.is_valid_uin(parts[6]):
+                uin = parts[6]
+            if len(parts) > 7 and parts[7]:
+                version = parts[7]
+            if len(parts) > 8 and cls.is_valid_vin(parts[8]):
+                vin = parts[8].upper()
 
-            if valid_uin or valid_imei or version:
+            # Dynamic fallback search across all parts if positional index differs
+            for p in parts:
+                if not imei and cls.is_valid_imei(p):
+                    imei = p
+                elif not iccid and len(p) in (18, 19, 20) and p.isdigit():
+                    iccid = p
+                elif not uin and cls.is_valid_uin(p):
+                    uin = p
+                elif not vin and cls.is_valid_vin(p):
+                    vin = p.upper()
+
+            # Require valid IMEI or UIN to confirm genuine GSM device login packet
+            if imei or uin:
                 return LoginPacketInfo(
-                    imei=valid_imei,
-                    iccid=iccid if (len(iccid) in (18, 19, 20) and iccid.isdigit()) else "",
-                    uin=valid_uin,
+                    imei=imei,
+                    iccid=iccid,
+                    uin=uin,
                     version=version,
-                    vin=valid_vin,
+                    vin=vin,
                     model="4G",
                     state="DO NOT DELETE",
+                    raw_packet=payload_str
                 )
         return None
+
+    @classmethod
+    def parse_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
+        """Extract structured LoginPacketInfo strictly from genuine 55AA Login Packets."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line or "55AA" not in clean_line:
+            return None
+        return cls.parse_55aa_login_packet(clean_line)
 
     @classmethod
     def parse_55aa_server_fota_header(cls, line: str) -> Optional[Dict[str, Any]]:
@@ -409,59 +431,11 @@ class MessageParser:
 
     @classmethod
     def parse_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
-        """Extract structured LoginPacketInfo dynamically from device serial log line."""
+        """Extract structured LoginPacketInfo strictly from genuine 55AA Login Packets."""
         clean_line = cls.strip_ansi(line)
-        if not clean_line:
+        if not clean_line or "55AA" not in clean_line:
             return None
-
-        if "55AA" in clean_line:
-            pkt_55aa = cls.parse_55aa_login_packet(clean_line)
-            if pkt_55aa:
-                return pkt_55aa
-
-        imei_match = re.search(r"(?:IMEI|imei)[:=]?\s*(\d{13,15})", clean_line)
-        uin_match = re.search(r"(?:UIN|uin)[:=]?\s*(ACON[A-Za-z0-9_-]{4,28})", clean_line)
-        vin_match = re.search(r"(?:vin|VIN|CHASSIS|chassis|Vehicle\s*ID)[\s\d\.\-_\|:=]*[\s\|:=]+([A-Z0-9]{14,18})", clean_line, re.IGNORECASE)
-        model_match = re.search(r"(?:MODEL|model)[:=]?\s*([A-Za-z0-9_-]+)", clean_line)
-        state_match = re.search(r"(?:STATE|state)[:=]?\s*([A-Za-z0-9_\s-]+)", clean_line)
-        ver_val = cls.parse_firmware_version(clean_line)
-        iccid_match = re.search(r"(?:ICCID|iccid)[:=]?\s*(\d{18,20})", clean_line)
-
-        parts = [p.strip() for p in re.split(r"[\s\|;,:]+", clean_line) if p.strip()]
-
-        uin = uin_match.group(1) if uin_match else next((p for p in parts if p.startswith("ACON")), None)
-        imei = imei_match.group(1) if imei_match else next((p for p in parts if cls.is_valid_imei(p)), None)
-        vin = None
-        if vin_match and cls.is_valid_vin(vin_match.group(1)):
-            vin = vin_match.group(1).upper()
-        else:
-            vin = next((p.upper() for p in parts if cls.is_valid_vin(p)), None)
-
-        if uin or imei or vin or ver_val:
-            version = ver_val or ""
-            state = "DO NOT DELETE"
-            if state_match and cls.is_valid_state_name(state_match.group(1)):
-                state = state_match.group(1).strip()
-
-            iccid = iccid_match.group(1) if iccid_match else ""
-            model = model_match.group(1) if model_match else "4G"
-
-            for p in parts:
-                if not iccid_match and len(p) in (18, 19, 20) and p.isdigit():
-                    iccid = p
-                elif cls.is_valid_state_name(p):
-                    state = p
-
-            return LoginPacketInfo(
-                imei=imei or "",
-                iccid=iccid,
-                uin=uin or "",
-                version=version,
-                vin=vin or "MAT00000000000000",
-                model=model,
-                state=state,
-            )
-        return None
+        return cls.parse_55aa_login_packet(clean_line)
 
 
 class TelemetryAccumulator:

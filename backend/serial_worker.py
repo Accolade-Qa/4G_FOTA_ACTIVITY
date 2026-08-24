@@ -176,9 +176,15 @@ class SerialWorker(QThread):
                                 logger.info("PLA Sleep countdown reached 0s (Soft Shutdown/Sleep). Resetting login capture for post-reboot logs.")
                                 self.reset_login_capture()
 
-                        # Harvest telemetry across multi-line reboot logs
+                        # 1. Parse and emit genuine 55AA Login Packets
+                        if "55AA" in cleaned:
+                            pkt_55aa = MessageParser.parse_55aa_login_packet(cleaned)
+                            if pkt_55aa:
+                                self.login_packet_signal.emit(pkt_55aa)
+
+                        # 2. Harvest telemetry across multi-line reboot logs for main window header
                         info = self.accumulator.feed_line(cleaned)
-                        if info:
+                        if info and not ("55AA" in cleaned):
                             self.login_packet_signal.emit(info)
 
             except Exception as err:

@@ -19,7 +19,8 @@ class LoginPacketInfo:
     vin: str
     model: str
     state: str
-    timestamp: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    raw_packet: str = ""
+    timestamp: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3])
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert model instance to dictionary."""
@@ -36,7 +37,8 @@ class LoginPacketInfo:
             vin=data.get("vin", ""),
             model=data.get("model", ""),
             state=data.get("state", "Default"),
-            timestamp=data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            raw_packet=data.get("raw_packet", ""),
+            timestamp=data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]),
         )
 
 
