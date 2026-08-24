@@ -684,12 +684,19 @@ class LoginPacketsTableWidget(QWidget):
 
     @pyqtSlot(object, str)
     def add_login_packet(self, info: Any, raw_line: str = "") -> None:
-        """Add a received LoginPacketInfo record to the table."""
+        """Add a received LoginPacketInfo record to the top of the table (strictly len >= 11)."""
+        raw_pkt = getattr(info, "raw_packet", "") or raw_line or ""
+        parts = [p.strip() for p in raw_pkt.split(",") if p.strip()]
+
+        # Strictly require genuine 55AA Login Packets with length >= 11
+        if not raw_pkt.startswith("55AA") or len(parts) < 11:
+            return
+
         self._record_counter += 1
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-        row = self.table.rowCount()
-        self.table.insertRow(row)
+        # Insert new row at index 0 so latest login packets always appear on top
+        self.table.insertRow(0)
 
         imei_val = getattr(info, "imei", "") or ""
         uin_val = getattr(info, "uin", "") or ""
@@ -697,10 +704,7 @@ class LoginPacketsTableWidget(QWidget):
         ver_val = getattr(info, "version", "") or ""
         iccid_val = getattr(info, "iccid", "") or ""
 
-        raw_pkt = getattr(info, "raw_packet", "") or ""
-        raw_display = raw_pkt.strip() if raw_pkt.strip() else raw_line.strip()
-        if not raw_display and (imei_val or uin_val):
-            raw_display = f"55AA,1,2,{imei_val},{uin_val},{vin_val},{ver_val}"
+        raw_display = raw_pkt.strip()
 
         item_num = QTableWidgetItem(str(self._record_counter))
         item_time = QTableWidgetItem(now_str)
@@ -717,15 +721,16 @@ class LoginPacketsTableWidget(QWidget):
         item_vin.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         item_ver.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.table.setItem(row, 0, item_num)
-        self.table.setItem(row, 1, item_time)
-        self.table.setItem(row, 2, item_imei)
-        self.table.setItem(row, 3, item_uin)
-        self.table.setItem(row, 4, item_vin)
-        self.table.setItem(row, 5, item_ver)
-        self.table.setItem(row, 6, item_raw)
+        self.table.setItem(0, 0, item_num)
+        self.table.setItem(0, 1, item_time)
+        self.table.setItem(0, 2, item_imei)
+        self.table.setItem(0, 3, item_uin)
+        self.table.setItem(0, 4, item_vin)
+        self.table.setItem(0, 5, item_ver)
+        self.table.setItem(0, 6, item_raw)
 
         self.lbl_count.setText(f"Total Login Packets Received: {self._record_counter}")
+        self.table.scrollToTop()
 
     def clear_table(self) -> None:
         """Clear all rows in the login packets table."""

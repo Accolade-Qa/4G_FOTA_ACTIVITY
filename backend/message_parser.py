@@ -46,18 +46,17 @@ class MessageParser:
     CIP1_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP1#|\*SET#CIP1#|CIP1:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP1#|STATUS#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
     SWEMP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#SWEMP#|\*SET#SWEMP#|SWEMP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#SWEMP#|STATUS#)([\w.-]+)", re.IGNORECASE)
     REBOOT_PATTERNS = [
-        re.compile(r"synchronized\s+suspend\s+ok", re.IGNORECASE),
-        re.compile(r"GSM\s+soft\s+shutdown\s+pass", re.IGNORECASE),
-        re.compile(r"soft\s+shnetwork", re.IGNORECASE),
-        re.compile(r"tdown\s+pass", re.IGNORECASE),
-        re.compile(r"MQTT\s+is\s+disconnecting", re.IGNORECASE),
+        re.compile(r"STATUS#CLR#FOTA#OK", re.IGNORECASE),
+        re.compile(r"CLR#FOTA#OK", re.IGNORECASE),
         re.compile(r"System\s+Booting", re.IGNORECASE),
         re.compile(r"BOOTLOADER\s+INIT", re.IGNORECASE),
         re.compile(r"\*SET#CRST#1#", re.IGNORECASE),
         re.compile(r"TCU\s+RESET\s+OK", re.IGNORECASE),
-        re.compile(r"aeplFwVer", re.IGNORECASE),
-        re.compile(r"UPTIME\s+SEC", re.IGNORECASE),
-        re.compile(r"\[PLA\]\s*SYSTEM", re.IGNORECASE),
+        re.compile(r"UPTIME\s+SEC\s*:\s*[01]\b", re.IGNORECASE),
+        re.compile(r"GSM\s+soft\s+shutdown\s+pass", re.IGNORECASE),
+        re.compile(r"synchronized\s+suspend\s+ok", re.IGNORECASE),
+        re.compile(r"Booting\s*\.\.\.", re.IGNORECASE),
+        re.compile(r"System\s+Reset", re.IGNORECASE),
     ]
 
     # Dynamic valid states populated from API response / servers.json
@@ -281,73 +280,70 @@ class MessageParser:
         return any(pat.search(clean_line) for pat in cls.REBOOT_PATTERNS)
 
     @classmethod
-    def parse_55aa_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
-        """Parse structured GSM Login Packet starting strictly with 55AA,1,2,... and length >= 11:
-        e.g. |55AA,1,2,1787549018,861564069210428,89916441244829541707,ACON4NA082300010428,5.2.9 5th IP,ACCDFV07241580138,...|
-        """
+    def parse_all_55aa_login_packets(cls, line: str) -> List[LoginPacketInfo]:
+        """Extract ALL genuine GSM 55AA Login Packets starting strictly with 55AA,1,2,... and length >= 11."""
         clean_line = cls.strip_ansi(line)
         if not clean_line or "55AA" not in clean_line:
-            return None
+            return []
 
-        match = re.search(r"(55AA\s*,[^\|\r\n]+)", clean_line)
-        if not match:
-            return None
+        packets: List[LoginPacketInfo] = []
+        matches = re.finditer(r"55AA\s*,1\s*,2\s*,[^\|\r\n\]]+", clean_line, re.IGNORECASE)
+        for match in matches:
+            payload_str = match.group(0).strip().strip("|[]\r\n\t").strip()
+            parts = [p.strip().strip("|[]") for p in payload_str.split(",")]
 
-        payload_str = match.group(1).strip().rstrip("|").strip()
-        parts = [p.strip() for p in payload_str.split(",")]
+            # Strictly enforce 55AA,1,2,... GSM login packet format with length >= 11
+            if len(parts) >= 11 and parts[0].upper() == "55AA" and parts[1] == "1" and parts[2] == "2":
+                imei = ""
+                iccid = ""
+                uin = ""
+                version = ""
+                vin = "MAT00000000000000"
 
-        # Strictly enforce 55AA,1,2,... GSM login packet format with length >= 11
-        if len(parts) >= 11 and parts[0].upper() == "55AA" and parts[1] == "1" and parts[2] == "2":
-            imei = ""
-            iccid = ""
-            uin = ""
-            version = ""
-            vin = "MAT00000000000000"
+                # Positional extraction
+                if len(parts) > 4 and cls.is_valid_imei(parts[4]):
+                    imei = parts[4]
+                if len(parts) > 5 and len(parts[5]) in (18, 19, 20) and parts[5].isdigit():
+                    iccid = parts[5]
+                if len(parts) > 6 and cls.is_valid_uin(parts[6]):
+                    uin = parts[6]
+                if len(parts) > 7 and parts[7]:
+                    version = parts[7]
+                if len(parts) > 8 and cls.is_valid_vin(parts[8]):
+                    vin = parts[8].upper()
 
-            # Parse positional parameters if valid
-            if len(parts) > 4 and cls.is_valid_imei(parts[4]):
-                imei = parts[4]
-            if len(parts) > 5 and len(parts[5]) in (18, 19, 20) and parts[5].isdigit():
-                iccid = parts[5]
-            if len(parts) > 6 and cls.is_valid_uin(parts[6]):
-                uin = parts[6]
-            if len(parts) > 7 and parts[7]:
-                version = parts[7]
-            if len(parts) > 8 and cls.is_valid_vin(parts[8]):
-                vin = parts[8].upper()
+                # Dynamic fallback search across all parts if positional index differs
+                for p in parts:
+                    if not imei and cls.is_valid_imei(p):
+                        imei = p
+                    elif not iccid and len(p) in (18, 19, 20) and p.isdigit():
+                        iccid = p
+                    elif not uin and cls.is_valid_uin(p):
+                        uin = p
+                    elif not vin and cls.is_valid_vin(p):
+                        vin = p.upper()
 
-            # Dynamic fallback search across all parts if positional index differs
-            for p in parts:
-                if not imei and cls.is_valid_imei(p):
-                    imei = p
-                elif not iccid and len(p) in (18, 19, 20) and p.isdigit():
-                    iccid = p
-                elif not uin and cls.is_valid_uin(p):
-                    uin = p
-                elif not vin and cls.is_valid_vin(p):
-                    vin = p.upper()
+                # Confirm genuine GSM device login packet with valid IMEI or UIN
+                if imei or uin:
+                    pkt_info = LoginPacketInfo(
+                        imei=imei,
+                        iccid=iccid,
+                        uin=uin,
+                        version=version,
+                        vin=vin,
+                        model="4G",
+                        state="DO NOT DELETE",
+                        raw_packet=payload_str
+                    )
+                    packets.append(pkt_info)
 
-            # Require valid IMEI or UIN to confirm genuine GSM device login packet
-            if imei or uin:
-                return LoginPacketInfo(
-                    imei=imei,
-                    iccid=iccid,
-                    uin=uin,
-                    version=version,
-                    vin=vin,
-                    model="4G",
-                    state="DO NOT DELETE",
-                    raw_packet=payload_str
-                )
-        return None
+        return packets
 
     @classmethod
-    def parse_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
-        """Extract structured LoginPacketInfo strictly from genuine 55AA Login Packets."""
-        clean_line = cls.strip_ansi(line)
-        if not clean_line or "55AA" not in clean_line:
-            return None
-        return cls.parse_55aa_login_packet(clean_line)
+    def parse_55aa_login_packet(cls, line: str) -> Optional[LoginPacketInfo]:
+        """Parse first structured GSM Login Packet starting strictly with 55AA,1,2,... and length >= 11."""
+        pkts = cls.parse_all_55aa_login_packets(line)
+        return pkts[0] if pkts else None
 
     @classmethod
     def parse_55aa_server_fota_header(cls, line: str) -> Optional[Dict[str, Any]]:

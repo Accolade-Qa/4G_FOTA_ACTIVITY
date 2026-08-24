@@ -178,11 +178,11 @@ class SerialWorker(QThread):
 
                         # 1. Parse and emit genuine 55AA Login Packets
                         if "55AA" in cleaned:
-                            pkt_55aa = MessageParser.parse_55aa_login_packet(cleaned)
-                            if pkt_55aa:
-                                self.login_packet_signal.emit(pkt_55aa)
+                            pkts_55aa = MessageParser.parse_all_55aa_login_packets(cleaned)
+                            for pkt in pkts_55aa:
+                                self.login_packet_signal.emit(pkt)
 
-                        # 2. Harvest telemetry across multi-line reboot logs for main window header
+                        # 2. Harvest telemetry across multi-line reboot logs or AT responses (*GET#PRNCFG#) for main window header & orchestrator
                         info = self.accumulator.feed_line(cleaned)
                         if info and not ("55AA" in cleaned):
                             self.login_packet_signal.emit(info)

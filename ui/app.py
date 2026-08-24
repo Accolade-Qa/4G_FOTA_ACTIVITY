@@ -316,6 +316,17 @@ class MinimalFotaWindow(QMainWindow):
         self.orchestrator.request_command_signal.connect(self._auto_execute_command)
         self.orchestrator.snackbar_signal.connect(self._show_snackbar_toast)
         self.orchestrator.stage_signal.connect(self.stage_widget.update_stage)
+        self.orchestrator.reset_ui_cards_signal.connect(self._on_reset_ui_cards)
+
+    @pyqtSlot()
+    def _on_reset_ui_cards(self) -> None:
+        """Reset 10-stage progression bar cards and progress bar when initiating a new FOTA cycle."""
+        if hasattr(self, "stage_widget"):
+            self.stage_widget.reset_stages()
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("FOTA Download Progress: 0.00%")
+        self._update_status_card("IN-PROGRESS", "Initiating next sequential FOTA process...", level="info", icon_name="sync")
 
     @pyqtSlot(str)
     def _show_snackbar_toast(self, msg: str) -> None:
@@ -358,7 +369,7 @@ class MinimalFotaWindow(QMainWindow):
             "warning": "#d97706",
             "danger": "#dc2626"
         }
-        badge_color = color_map.get(level, "#2563eb")
+        badge_color = color_map.get(level, "#010408")
         self.lbl_stage_badge.setStyleSheet(f"font-weight: 800; font-size: 8.5pt; color: {badge_color};")
         self.frame_msg_card.setProperty("class", f"status-banner status-banner-{level}")
         self.frame_msg_card.setStyle(self.frame_msg_card.style())
@@ -517,19 +528,21 @@ class MinimalFotaWindow(QMainWindow):
         self.btn_toggle.setStyle(self.btn_toggle.style())
 
         # Auto-fire reboot command *SET#CRST#1# upon engine connection
-        QTimer.singleShot(600, lambda: self._auto_execute_command("*SET#CRST#1#"))
+        QTimer.singleShot(600, lambda: self._auto_execute_command("*GET#PRNCFG#"))
 
     @pyqtSlot(object)
     def _on_login_packet_received(self, info: LoginPacketInfo) -> None:
-        """Forward received telemetry to orchestrator and record genuine 55AA login packets in Tab 4 table."""
+        """Forward received telemetry to orchestrator and record genuine 55AA login packets (len >= 11) in Tab 4 table."""
         sel_state = self.combo_states.currentText()
         if self.orchestrator:
             self.orchestrator.process_login_packet(info, selected_ui_state=sel_state)
 
-        # Only add genuine 55AA Login Packets to Tab 4 Login Packets table
+        # Record ONLY genuine 55AA Login Packets with len >= 11 in Tab 4 table
         raw_pkt = getattr(info, "raw_packet", "") or ""
-        if raw_pkt.startswith("55AA") or "55AA" in raw_pkt:
-            self.login_packets_tab.add_login_packet(info, raw_pkt)
+        parts = [p.strip() for p in raw_pkt.split(",") if p.strip()]
+        if raw_pkt.startswith("55AA") and len(parts) >= 11:
+            if hasattr(self, "login_packets_tab"):
+                self.login_packets_tab.add_login_packet(info, raw_pkt)
 
     @pyqtSlot(str)
     def _on_sleep_event(self, log_line: str) -> None:
@@ -595,7 +608,7 @@ class MinimalFotaWindow(QMainWindow):
 
     @pyqtSlot()
     def _clear_device_telemetry(self) -> None:
-        """Reset all captured device telemetry fields back to defaults."""
+        """Reset only top header telemetry cards to '---' and re-fire *GET#PRNCFG# while ongoing process continues."""
         self.lbl_imei.setText("---")
         self.lbl_uin.setText("---")
         self.lbl_vin.setText("---")
@@ -603,12 +616,18 @@ class MinimalFotaWindow(QMainWindow):
         self.lbl_state.setText(self.combo_states.currentText() or "DO NOT DELETE")
         self.lbl_ver.setText("---")
         self._last_toast_key = None
-        
-        if self.orchestrator:
-            self.orchestrator.reset_orchestrator()
+
+        # Reset serial worker login accumulator so fresh telemetry is re-harvested from *GET#PRNCFG#
         if self.serial_worker:
             self.serial_worker.reset_login_capture()
-        self.lbl_msg.setText("Cleared captured device telemetry.")
+
+        # Re-fire *GET#PRNCFG# command over serial to fetch device configuration once again
+        if self.serial_worker and self.serial_worker.isRunning():
+            self._auto_execute_command("*GET#PRNCFG#")
+
+        self.lbl_msg.setText("Cleared top header cards. Fired *GET#PRNCFG# to re-fetch device info...")
+        if hasattr(self, "snackbar"):
+            self.snackbar.show_message("Top header cards reset. Fired *GET#PRNCFG# command...", duration_ms=3000)
 
     @pyqtSlot(bool, str)
     def _on_port_status(self, connected: bool, msg: str) -> None:
