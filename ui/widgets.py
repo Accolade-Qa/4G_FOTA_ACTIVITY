@@ -113,6 +113,8 @@ class InteractiveTerminalConsole(QPlainTextEdit):
     def keyPressEvent(self, event) -> None:
         """Handle key events: Pressing Enter or Space scrolls instantly to the bottom of the log."""
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            sb = self.verticalScrollBar()
+            sb.setValue(sb.maximum())
             self.moveCursor(QTextCursor.MoveOperation.End)
             event.accept()
         else:
@@ -751,7 +753,7 @@ class LoginPacketsTableWidget(QWidget):
             os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
             with open(file_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                headers = ["#", "Date Time", "IMEI", "UIN", "VIN", "Version", "Raw Login Packet"]
+                headers = ["Sr.No.", "Date Time", "IMEI", "UIN", "VIN", "Version", "Raw Login Packet"]
                 writer.writerow(headers)
 
                 for r in range(self.table.rowCount()):

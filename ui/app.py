@@ -240,7 +240,7 @@ class MinimalFotaWindow(QMainWindow):
         self.btn_clear_log.setProperty("class", "btn-secondary")
         self.btn_clear_log.setFixedWidth(95)
         self.btn_clear_log.setToolTip("Clear terminal console (Ctrl+K / Ctrl+L)")
-        self.btn_clear_log.clicked.connect(self.console.clear)
+        self.btn_clear_log.clicked.connect(self._clear_terminal_console)
 
         cmd_box.addWidget(self.input_cmd, stretch=1)
         cmd_box.addWidget(self.btn_send_cmd)
@@ -273,10 +273,10 @@ class MinimalFotaWindow(QMainWindow):
     def _setup_shortcuts(self) -> None:
         """Setup keyboard shortcuts for fast engineering workflows."""
         sc_clear = QShortcut(QKeySequence("Ctrl+K"), self)
-        sc_clear.activated.connect(self.console.clear)
+        sc_clear.activated.connect(self._clear_terminal_console)
 
         sc_clear2 = QShortcut(QKeySequence("Ctrl+L"), self)
-        sc_clear2.activated.connect(self.console.clear)
+        sc_clear2.activated.connect(self._clear_terminal_console)
 
         sc_refresh = QShortcut(QKeySequence("Ctrl+R"), self)
         sc_refresh.activated.connect(self._refresh_ports)
@@ -629,6 +629,21 @@ class MinimalFotaWindow(QMainWindow):
         if hasattr(self, "snackbar"):
             self.snackbar.show_message("Top header cards reset. Fired *GET#PRNCFG# command...", duration_ms=3000)
 
+    @pyqtSlot()
+    def _clear_terminal_console(self) -> None:
+        """Flush pending queued log lines to SessionLogger disk log first so zero logs are lost, then clear UI viewport."""
+        # 1. Flush any pending buffered log lines to disk session log first so zero logs are missed
+        self._flush_log_buffer()
+
+        # 2. Clear UI terminal viewport
+        self.console.clear()
+
+        # 3. Inform user that file logging continues uninterrupted
+        msg = "Terminal display cleared. File logging continues uninterrupted..."
+        logger.info(msg)
+        if hasattr(self, "snackbar"):
+            self.snackbar.show_message("Terminal screen cleared (File logging continues)", duration_ms=2500)
+
     @pyqtSlot(bool, str)
     def _on_port_status(self, connected: bool, msg: str) -> None:
         """Handle serial connection and physical disconnect events."""
@@ -709,6 +724,24 @@ class MinimalFotaWindow(QMainWindow):
                 sb.setValue(sb.maximum())
             else:
                 sb.setValue(prev_val)
+
+    def keyPressEvent(self, event) -> None:
+        """Handle window-level key shortcuts: Space or Enter scrolls log console to the bottom."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            # If user is typing in command line input, let input line handle Enter for command execution
+            if hasattr(self, "input_cmd") and self.input_cmd.hasFocus() and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                super().keyPressEvent(event)
+                return
+
+            if hasattr(self, "console"):
+                sb = self.console.verticalScrollBar()
+                sb.setValue(sb.maximum())
+                self.console.moveCursor(QTextCursor.MoveOperation.End)
+                if hasattr(self, "snackbar"):
+                    self.snackbar.show_message("Scrolled to latest log entries", duration_ms=1500)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def resizeEvent(self, event) -> None:
         """Reposition floating snackbar on window resize."""

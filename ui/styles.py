@@ -518,15 +518,15 @@ QProgressBar {
     background-color: #0f172a;
     border: 1px solid #334155;
     border-radius: 6px;
-    height: 16px;
+    height: 18px;
     text-align: center;
     font-size: 8.5pt;
-    font-weight: 700;
-    color: #38bdf8;
+    font-weight: 800;
+    color: #ffffff;
 }
 
 QProgressBar::chunk {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284c7, stop:0.5 #38bdf8, stop:1 #818cf8);
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1d4ed8, stop:0.5 #2563eb, stop:1 #38bdf8);
     border-radius: 5px;
 }
 

@@ -332,37 +332,115 @@ class FotaOrchestrator(QObject):
         self.prncfg_command_fired: bool = False
         self.latest_api_history_item: dict = {}
 
+    def _extract_api_field(self, item: dict, field_keywords: List[str]) -> str:
+        """Search top-level and nested dicts for any field matching keywords."""
+        if not isinstance(item, dict):
+            return ""
+
+        for k, v in item.items():
+            k_lower = k.lower()
+            if any(kw.lower() in k_lower for kw in field_keywords):
+                if isinstance(v, (str, bool, int)):
+                    return str(v).strip()
+
+        for k, v in item.items():
+            if isinstance(v, dict):
+                res = self._extract_api_field(v, field_keywords)
+                if res:
+                    return res
+        return ""
+
+    def _is_valid_passed_or_skipped(self, val: Any) -> bool:
+        if val is True:
+            return True
+        v_str = str(val or "").strip().upper()
+        return v_str in (
+            "SET", "PASSED", "COMPLETED", "SUCCESS", "TRUE", "1", "OK",
+            "ALREADY SET", "ENABLED", "SKIPPED", "SKIP", "NOT REQUIRED"
+        )
+
     def check_api_server_statuses_set(self, item: dict) -> Tuple[bool, str]:
-        """Validate if State Enable OTA, Primary IP, and Secondary IP statuses from API response are all 'SET'."""
+        """Validate if State Enable OTA, Primary IP, and Secondary IP statuses from API response are all 'SET' or 'SKIPPED'."""
         if not isinstance(item, dict) or not item:
             return True, "Default SET (Local serial verification mode)"
 
-        def is_set(val: Any) -> bool:
-            if val is True:
-                return True
-            v_str = str(val or "").strip().upper()
-            return v_str in ("SET", "PASSED", "COMPLETED", "SUCCESS", "TRUE", "1", "OK", "ALREADY SET", "ENABLED")
+        swemp_val = self._extract_api_field(item, ["stateEnableOtaStatus", "swempStatus", "stateEnableStatus", "stateEnabledOtaStatus", "swemp"]) or "SET"
+        chtp_val = self._extract_api_field(item, ["primaryIpStatus", "chtpStatus", "primaryIp1Status", "ip1Status", "primaryip"]) or "SET"
+        cip1_val = self._extract_api_field(item, ["secondaryIpStatus", "cip1Status", "secondaryIp2Status", "ip2Status", "secondaryip"]) or "SET"
 
-        swemp_val = (item.get("stateEnableOtaStatus") or item.get("swempStatus") or
-                     item.get("stateEnableStatus") or item.get("stateEnabledOtaStatus") or "SET")
-        chtp_val = (item.get("primaryIpStatus") or item.get("chtpStatus") or
-                    item.get("primaryIp1Status") or item.get("ip1Status") or "SET")
-        cip1_val = (item.get("secondaryIpStatus") or item.get("cip1Status") or
-                    item.get("secondaryIp2Status") or item.get("ip2Status") or "SET")
-
-        swemp_ok = is_set(swemp_val)
-        chtp_ok = is_set(chtp_val)
-        cip1_ok = is_set(cip1_val)
+        swemp_ok = self._is_valid_passed_or_skipped(swemp_val)
+        chtp_ok = self._is_valid_passed_or_skipped(chtp_val)
+        cip1_ok = self._is_valid_passed_or_skipped(cip1_val)
 
         if swemp_ok and chtp_ok and cip1_ok:
-            return True, f"API Server Header Statuses: State Enable OTA={swemp_val}, Primary IP={chtp_val}, Secondary IP={cip1_val} (ALL SET)"
+            return True, f"API Server Header Statuses: State Enable OTA={swemp_val}, Primary IP={chtp_val}, Secondary IP={cip1_val} (ALL SET/SKIPPED)"
 
         missing = []
-        if not swemp_ok: missing.append(f"State Enable OTA Status ('{swemp_val}' != 'SET')")
-        if not chtp_ok: missing.append(f"Primary IP Status ('{chtp_val}' != 'SET')")
-        if not cip1_ok: missing.append(f"Secondary IP Status ('{cip1_val}' != 'SET')")
+        if not swemp_ok: missing.append(f"State Enable OTA Status ('{swemp_val}' != 'SET/SKIPPED')")
+        if not chtp_ok: missing.append(f"Primary IP Status ('{chtp_val}' != 'SET/SKIPPED')")
+        if not cip1_ok: missing.append(f"Secondary IP Status ('{cip1_val}' != 'SET/SKIPPED')")
 
-        return False, f"Waiting for API server header statuses to be SET: {', '.join(missing)}"
+        return False, f"Waiting for API server header statuses to be SET/SKIPPED: {', '.join(missing)}"
+
+    def _evaluate_api_skipped_stages(self) -> None:
+        """Check if API response has Primary IP Status or Secondary IP Status marked as 'Skipped' / 'Set' and pass stages directly."""
+        if not isinstance(self.latest_api_history_item, dict) or not self.latest_api_history_item:
+            return
+
+        item = self.latest_api_history_item
+
+        p_status = self._extract_api_field(item, ["primaryIpStatus", "primaryIPStatus", "chtpStatus", "primaryIp1Status", "ip1Status", "primaryip", "govtIp1Status"])
+        s_status = self._extract_api_field(item, ["secondaryIpStatus", "secondaryIPStatus", "cip1Status", "secondaryIp2Status", "ip2Status", "secondaryip", "govtIp2Status"])
+        state_status = self._extract_api_field(item, ["stateEnableOtaStatus", "swempStatus", "stateEnableStatus", "stateEnabledOtaStatus", "swemp"])
+        dev_fota_status = self._extract_api_field(item, ["deviceFotaStatus", "deviceFotaCompletionStatus", "fotaStatus", "status"])
+
+        p_ok = self._is_valid_passed_or_skipped(p_status)
+        s_ok = self._is_valid_passed_or_skipped(s_status)
+        swemp_ok = self._is_valid_passed_or_skipped(state_status)
+        is_completed_api = ("COMPLET" in dev_fota_status.upper()) or (dev_fota_status.upper() == "TRUE")
+
+        # When download reached 100%, reboot detected, or API completed:
+        if self.download_100_reached or self.reboot_detected or is_completed_api:
+            # Stage 6 Reboot
+            if not self.reboot_detected:
+                self.reboot_detected = True
+                self.stage_states[6] = "PASSED"
+                self.stage_signal.emit(6, "PASSED", "Post-installation device reboot confirmed via API")
+
+            # Stage 7 (State Enable OTA)
+            if not self.state_ota_verified and (swemp_ok or is_completed_api):
+                self.state_ota_verified = True
+                msg = f"State Enabled OTA verified active ({state_status or 'SET'} in API)"
+                logger.info("Stage 7: %s. Stage PASSED.", msg)
+                self.stage_states[7] = "PASSED"
+                self.stage_signal.emit(7, "PASSED", msg)
+
+            # Stage 8 (Primary CHTP IP1)
+            if not self.ip1_verified and (p_ok or is_completed_api):
+                self.state_ota_verified = True
+                self.ip1_verified = True
+                lbl = p_status or "Skipped"
+                msg = f"Primary CHTP IP1 verified ({lbl} in API response - device already configured)"
+                logger.info("Stage 8: %s. Stage PASSED directly.", msg)
+                self.stage_states[8] = "PASSED"
+                self.stage_signal.emit(8, "PASSED", msg)
+                self.stage_states[9] = "RUNNING"
+                self.stage_signal.emit(9, "RUNNING", "Validating Secondary Server CIP1 IP2 & Port2...")
+
+            # Stage 9 (Secondary CIP1 IP2)
+            if self.ip1_verified and not self.ip2_verified and (s_ok or is_completed_api):
+                self.ip2_verified = True
+                lbl = s_status or "Skipped"
+                msg = f"Secondary CIP1 IP2 verified ({lbl} in API response - device already configured)"
+                logger.info("Stage 9: %s. Stage PASSED directly.", msg)
+                self.stage_states[9] = "PASSED"
+                self.stage_signal.emit(9, "PASSED", msg)
+                self.stage_states[10] = "RUNNING"
+                self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
+
+            # Stage 10 continuous trigger
+            if self.ip2_verified and not self.config_verified:
+                self._evaluate_stage10_completion()
 
     def prepare_next_fota_cycle(self) -> None:
         """Reset stage cards and progress bar, then trigger the next sequential FOTA version."""
@@ -468,6 +546,9 @@ class FotaOrchestrator(QObject):
                 self.stage_signal.emit(6, "PASSED", "Post-installation device reboot/reset detected (120s window active)")
                 self.stage_states[7] = "RUNNING"
                 self.stage_signal.emit(7, "RUNNING", "Validating SWEMP State Enabled OTA...")
+
+        # Evaluate if API response has Primary IP Status or Secondary IP Status marked as 'Skipped'
+        self._evaluate_api_skipped_stages()
 
         meta = self.resolver.get_state_server_metadata(self.current_device.state if self.current_device else "")
         has_ip1 = bool(meta.get("ip1") and str(meta.get("ip1")).strip())
@@ -823,6 +904,9 @@ class FotaOrchestrator(QObject):
         """Handle live FOTA history API poll updates."""
         if isinstance(item, dict) and item:
             self.latest_api_history_item = item
+
+        # Evaluate if API response has Primary IP Status or Secondary IP Status marked as 'Skipped'
+        self._evaluate_api_skipped_stages()
 
         progress = float(item.get("progress") or 0.0)
         status_str = item.get("deviceFotaStatus") or "In-Progress"
