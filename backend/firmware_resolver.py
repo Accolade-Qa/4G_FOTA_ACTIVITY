@@ -90,33 +90,60 @@ class FirmwareResolver:
                 versions.append(item)
         return versions
 
+    def _find_matching_object_index(self, objects: List[Dict[str, Any]], current_ver: str) -> int:
+        """Find index of object matching current_ver using strict hierarchical priority to prevent version downgrades."""
+        clean_curr = str(current_ver).strip()
+        if not clean_curr:
+            return -1
+
+        c_upper = clean_curr.upper()
+
+        # PASS 1: Strict Exact Equality Match on expectedFirmwareVersion, description, or version
+        for idx, obj in enumerate(objects):
+            exp = str(obj.get("expectedFirmwareVersion", "")).strip().upper()
+            desc = str(obj.get("description", "")).strip().upper()
+            ver = str(obj.get("version", "")).strip().upper()
+
+            if c_upper and (c_upper == exp or c_upper == desc or c_upper == ver):
+                return idx
+
+        # PASS 2: Cleaned Extension / Prefix Exact Match (e.g. '5.2.9_REL05' vs 'ATCU_5.2.9_REL05.bin')
+        for idx, obj in enumerate(objects):
+            fn = str(obj.get("fileName", "")).strip().upper()
+            fn_clean = fn.replace(".BIN", "").replace("ATCU_", "").replace("ATCU", "").strip("_")
+            exp = str(obj.get("expectedFirmwareVersion", "")).strip().upper()
+            desc = str(obj.get("description", "")).strip().upper()
+
+            if c_upper and (c_upper == fn_clean or (len(c_upper) >= 6 and c_upper in fn_clean and len(c_upper) == len(fn_clean))):
+                return idx
+
+        # PASS 3: Safe Substring Match (ONLY for long detailed version strings >= 6 chars like '5.2.9_REL05')
+        for idx, obj in enumerate(objects):
+            exp = str(obj.get("expectedFirmwareVersion", "")).strip().upper()
+            desc = str(obj.get("description", "")).strip().upper()
+            fn = str(obj.get("fileName", "")).strip().upper()
+
+            if len(c_upper) >= 6 and (c_upper in exp or c_upper in desc or c_upper in fn):
+                return idx
+
+        return -1
+
     def _object_matches_version(self, obj: Dict[str, Any], current_ver: str) -> bool:
-        """Check if an object in servers.json matches current device version via fileName, description, expectedFirmwareVersion, or version."""
+        """Check if an object in servers.json matches current device version."""
         clean_curr = str(current_ver).strip()
         if not clean_curr:
             return False
+        c_upper = clean_curr.upper()
+        exp = str(obj.get("expectedFirmwareVersion", "")).strip().upper()
+        desc = str(obj.get("description", "")).strip().upper()
+        ver = str(obj.get("version", "")).strip().upper()
+        fn = str(obj.get("fileName", "")).strip().upper()
+        fn_clean = fn.replace(".BIN", "").replace("ATCU_", "").replace("ATCU", "").strip("_")
 
-        file_name = str(obj.get("fileName", "")).strip()
-        desc = str(obj.get("description", "")).strip()
-        exp_ver = str(obj.get("expectedFirmwareVersion", "")).strip()
-        ver = str(obj.get("version", "")).strip()
-
-        # 1. Match fileName (e.g. '5.2.8_REL25' inside '5.2.8_REL25.bin' or 'ATCU_5.2.8_REL25.bin')
-        if file_name and clean_curr in file_name:
+        if c_upper in (exp, desc, ver, fn_clean):
             return True
-
-        # 2. Match description (e.g. '5.2.8_REL25' == '5.2.8_REL25')
-        if desc and (clean_curr == desc or clean_curr in desc or desc in clean_curr):
+        if len(c_upper) >= 6 and (c_upper in exp or c_upper in desc or c_upper in fn):
             return True
-
-        # 3. Match expectedFirmwareVersion
-        if exp_ver and (clean_curr == exp_ver or clean_curr in exp_ver or exp_ver in clean_curr):
-            return True
-
-        # 4. Match version field
-        if ver and (clean_curr == ver or ver.startswith(clean_curr) or clean_curr.startswith(ver) or ver in clean_curr or clean_curr in ver):
-            return True
-
         return False
 
     def validate_version_exists(self, state_name: str, version: str) -> bool:
@@ -128,17 +155,14 @@ class FirmwareResolver:
             return True
         if not version:
             return False
-        for obj in objects:
-            if self._object_matches_version(obj, version):
-                return True
-        return False
+        return self._find_matching_object_index(objects, version) != -1
 
     def resolve_next_version(self, state_name: str, current_version: str) -> Optional[str]:
         """Determine the next firmware version to upgrade to.
 
         - Single Object Logic: If state JSON contains ONLY 1 object, start FOTA on that same version/expected target.
-        - Multi-Object Logic: Match current_version against fileName / description / expectedFirmwareVersion / version
-          of objects in servers.json, locate its index, and take the version of the NEXT object.
+        - Multi-Object Logic: Match current_version against expectedFirmwareVersion / description / version
+          using strict exact-match priority, locate its index, and take the version of the NEXT object.
         """
         objects = self.get_state_firmware_objects(state_name)
 
@@ -164,16 +188,13 @@ class FirmwareResolver:
 
         clean_curr = str(current_version).strip()
 
-        # 2. Match current_version against objects by fileName / description / expectedFirmwareVersion / version
-        matched_idx = -1
-        for idx, obj in enumerate(objects):
-            if self._object_matches_version(obj, clean_curr):
-                matched_idx = idx
-                logger.info("Matched device version '%s' against object index %d (fileName: '%s', desc: '%s', version: '%s') under state '%s'.",
-                            clean_curr, idx, obj.get("fileName"), obj.get("description"), obj.get("version"), state_name)
-                break
+        # 2. Match current_version using strict hierarchical priority matching
+        matched_idx = self._find_matching_object_index(objects, clean_curr)
 
         if matched_idx != -1:
+            obj = objects[matched_idx]
+            logger.info("Matched device version '%s' against object index %d (version: '%s', exp: '%s', desc: '%s') under state '%s'.",
+                        clean_curr, matched_idx, obj.get("version"), obj.get("expectedFirmwareVersion"), obj.get("description"), state_name)
             if matched_idx + 1 < len(objects):
                 next_obj = objects[matched_idx + 1]
                 next_ver = str(next_obj.get("version", "")).strip()
