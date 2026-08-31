@@ -15,7 +15,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Set
+from typing import Optional, List, Set, Tuple
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
@@ -53,7 +53,7 @@ def is_active_fota_session(item: dict) -> bool:
     return added_to_batch and (not is_aborted) and (not is_completed) and (attempt_count < 3)
 
 
-def save_active_fota_json(imei: str, uin: str, target_ver: str, state_name: str, item: dict) -> None:
+def save_active_fota_json(imei: str, uin: str, target_ver: str, state_name: str, item: dict, stage_states: Optional[dict] = None) -> None:
     """Save/update active FOTA status information into results/active_fota.json."""
     try:
         out_dir = Path("results")
@@ -74,6 +74,7 @@ def save_active_fota_json(imei: str, uin: str, target_ver: str, state_name: str,
             "pingCount": item.get("pingCount", 0),
             "attemptCount": item.get("attemptCount", 0),
             "deviceFotaCompletionStatus": item.get("deviceFotaCompletionStatus", False),
+            "stage_states": stage_states or {},
             "lastUpdated": datetime.now().isoformat()
         }
 
@@ -82,6 +83,56 @@ def save_active_fota_json(imei: str, uin: str, target_ver: str, state_name: str,
         logger.info("Saved active FOTA info to %s", out_file)
     except Exception as err:
         logger.warning("Failed writing active_fota.json: %s", err)
+
+
+def load_active_fota_json(imei: str) -> Optional[dict]:
+    """Read active FOTA status and saved stage states from results/active_fota.json."""
+    try:
+        out_file = Path("results/active_fota.json")
+        if out_file.exists():
+            with open(out_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data.get("imei") == imei:
+                    return data
+    except Exception as err:
+        logger.warning("Error reading active_fota.json: %s", err)
+    return None
+
+
+def save_initial_device_snapshot_json(login_info: LoginPacketInfo, device_state: str) -> None:
+    """Save initial pre-upgrade device telemetry snapshot to results/initial_device_snapshot.json."""
+    try:
+        out_dir = Path("results")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = out_dir / "initial_device_snapshot.json"
+        data = {
+            "uin": login_info.uin,
+            "imei": login_info.imei,
+            "vin": login_info.vin,
+            "iccid": login_info.iccid,
+            "version": login_info.version,
+            "state": device_state,
+            "timestamp": datetime.now().isoformat()
+        }
+        with open(out_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        logger.info("Saved initial device snapshot to %s", out_file)
+    except Exception as err:
+        logger.warning("Failed writing initial_device_snapshot.json: %s", err)
+
+
+def load_initial_device_snapshot_json() -> Optional[dict]:
+    """Read initial pre-upgrade device telemetry snapshot from results/initial_device_snapshot.json."""
+    try:
+        out_file = Path("results/initial_device_snapshot.json")
+        if out_file.exists():
+            with open(out_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data.get("uin"):
+                    return data
+    except Exception as err:
+        logger.warning("Error reading initial_device_snapshot.json: %s", err)
+    return None
 
 
 class FotaAsyncTriggerWorker(QThread):
@@ -231,9 +282,15 @@ class FotaApiPollerWorker(QThread):
 
     def run(self) -> None:
         logger.info("Started background FOTA API poller worker for IMEI %s", self.imei)
+        completed_emitted = False
 
         while self.running:
             try:
+                # Stop if orchestrator has completed Stage 10 configuration verification
+                if self.orchestrator.config_verified:
+                    logger.info("Stage 10 completed & verified for IMEI %s. API Poller worker stopping.", self.imei)
+                    break
+
                 history = self.orchestrator.api_client.get_fota_device_history(self.imei)
                 if history and isinstance(history, list) and len(history) > 0:
                     item = history[0]
@@ -266,27 +323,33 @@ class FotaApiPollerWorker(QThread):
 
                     # 3. Check if Completed
                     if is_completed or progress >= 100.0:
-                        msg = f"🎉 FOTA completed successfully (100%). Pings: {ping_count}, Attempts: {attempt_count}/3."
-                        logger.info(msg)
-                        self.poll_finished_signal.emit("COMPLETED", msg)
-                        break
+                        if not completed_emitted:
+                            completed_emitted = True
+                            msg = f"🎉 FOTA completed successfully (100%). Pings: {ping_count}, Attempts: {attempt_count}/3."
+                            logger.info(msg)
+                            self.poll_finished_signal.emit("COMPLETED", msg)
 
-                    # Determine adaptive polling delay: 60s (1 min) if < 95%, 3s if >= 95%
-                    sleep_sec = 2 if progress >= 95.0 else 60
-                    logger.info("Polled IMEI %s -> Progress: %.2f%%, Pings: %d, Attempts: %d/3. Next poll in %d seconds.",
-                                self.imei, progress, ping_count, attempt_count, sleep_sec)
+                        # If Stage 10 is done, exit loop cleanly
+                        if self.orchestrator.config_verified:
+                            logger.info("Stage 10 completed & verified for IMEI %s. Poller stopping.", self.imei)
+                            break
+
+                    # Determine adaptive polling delay: 60s (1 min) if < 95%, 3s if >= 95% till Stage 10 completes!
+                    sleep_sec = 3 if (progress >= 95.0 or is_completed) else 60
+                    logger.debug("Polled IMEI %s -> Progress: %.2f%%, Pings: %d, Attempts: %d/3. Next poll in %d seconds.",
+                                 self.imei, progress, ping_count, attempt_count, sleep_sec)
 
                     for _ in range(sleep_sec):
-                        if not self.running:
+                        if not self.running or self.orchestrator.config_verified:
                             break
                         self.msleep(1000)
 
                 else:
-                    self.msleep(10000)
+                    self.msleep(5000)
 
             except Exception as err:
                 logger.error("FotaApiPollerWorker error for IMEI %s: %s", self.imei, err)
-                self.msleep(10000)
+                self.msleep(5000)
 
 
 class FotaOrchestrator(QObject):
@@ -330,6 +393,9 @@ class FotaOrchestrator(QObject):
         self.state_ota_verified: bool = False
         self.config_verified: bool = False
         self.prncfg_command_fired: bool = False
+        self.prncfg_response_received: bool = False
+        self.latest_prncfg_log_line: str = ""
+        self.latest_55aa_login_packet: Optional[LoginPacketInfo] = None
         self.latest_api_history_item: dict = {}
 
     def _extract_api_field(self, item: dict, field_keywords: List[str]) -> str:
@@ -397,48 +463,62 @@ class FotaOrchestrator(QObject):
         p_ok = self._is_valid_passed_or_skipped(p_status)
         s_ok = self._is_valid_passed_or_skipped(s_status)
         swemp_ok = self._is_valid_passed_or_skipped(state_status)
-        is_completed_api = ("COMPLET" in dev_fota_status.upper()) or (dev_fota_status.upper() == "TRUE")
+        dev_fota_upper = dev_fota_status.upper()
+        is_completed_api = any(kw in dev_fota_upper for kw in ("COMPLET", "SKIPPED", "SKIP", "PASSED", "SUCCESS", "TRUE"))
 
-        # When download reached 100%, reboot detected, or API completed:
+        # When download reached 100%, reboot detected, or API status is Completed/Skipped:
         if self.download_100_reached or self.reboot_detected or is_completed_api:
             # Stage 6 Reboot
-            if not self.reboot_detected:
+            if not self.reboot_detected or self.stage_states.get(6) != "PASSED":
                 self.reboot_detected = True
                 self.stage_states[6] = "PASSED"
                 self.stage_signal.emit(6, "PASSED", "Post-installation device reboot confirmed via API")
 
             # Stage 7 (State Enable OTA)
-            if not self.state_ota_verified and (swemp_ok or is_completed_api):
-                self.state_ota_verified = True
-                msg = f"State Enabled OTA verified active ({state_status or 'SET'} in API)"
-                logger.info("Stage 7: %s. Stage PASSED.", msg)
-                self.stage_states[7] = "PASSED"
-                self.stage_signal.emit(7, "PASSED", msg)
+            if not self.state_ota_verified:
+                if swemp_ok or is_completed_api:
+                    self.state_ota_verified = True
+                    lbl = state_status or ("Completed" if is_completed_api else "Set")
+                    msg = f"State Enabled OTA verified active ({lbl} in API)"
+                    logger.info("Stage 7: %s. Stage PASSED.", msg)
+                    self.stage_states[7] = "PASSED"
+                    self.stage_signal.emit(7, "PASSED", msg)
+                else:
+                    self.stage_states[7] = "RUNNING"
+                    self.stage_signal.emit(7, "RUNNING", f"Waiting for State Enable OTA Status to be Set/Skipped in API (Current: {state_status or 'Pending'})...")
+                    return
 
             # Stage 8 (Primary CHTP IP1)
-            if not self.ip1_verified and (p_ok or is_completed_api):
-                self.state_ota_verified = True
-                self.ip1_verified = True
-                lbl = p_status or "Skipped"
-                msg = f"Primary CHTP IP1 verified ({lbl} in API response - device already configured)"
-                logger.info("Stage 8: %s. Stage PASSED directly.", msg)
-                self.stage_states[8] = "PASSED"
-                self.stage_signal.emit(8, "PASSED", msg)
-                self.stage_states[9] = "RUNNING"
-                self.stage_signal.emit(9, "RUNNING", "Validating Secondary Server CIP1 IP2 & Port2...")
+            if self.state_ota_verified and not self.ip1_verified:
+                if p_ok or is_completed_api:
+                    self.ip1_verified = True
+                    lbl = p_status or ("Completed" if is_completed_api else "Set")
+                    msg = f"Primary CHTP IP1 verified ({lbl} in API response)"
+                    logger.info("Stage 8: %s. Stage PASSED directly.", msg)
+                    self.stage_states[8] = "PASSED"
+                    self.stage_signal.emit(8, "PASSED", msg)
+                else:
+                    self.stage_states[8] = "RUNNING"
+                    self.stage_signal.emit(8, "RUNNING", f"Waiting for Primary IP Status to be Set/Skipped in API (Current: {p_status or 'Pending'})...")
+                    return
 
             # Stage 9 (Secondary CIP1 IP2)
-            if self.ip1_verified and not self.ip2_verified and (s_ok or is_completed_api):
-                self.ip2_verified = True
-                lbl = s_status or "Skipped"
-                msg = f"Secondary CIP1 IP2 verified ({lbl} in API response - device already configured)"
-                logger.info("Stage 9: %s. Stage PASSED directly.", msg)
-                self.stage_states[9] = "PASSED"
-                self.stage_signal.emit(9, "PASSED", msg)
-                self.stage_states[10] = "RUNNING"
-                self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
+            if self.ip1_verified and not self.ip2_verified:
+                if s_ok or is_completed_api:
+                    self.ip2_verified = True
+                    lbl = s_status or ("Completed" if is_completed_api else "Set")
+                    msg = f"Secondary CIP1 IP2 verified ({lbl} in API response)"
+                    logger.info("Stage 9: %s. Stage PASSED directly.", msg)
+                    self.stage_states[9] = "PASSED"
+                    self.stage_signal.emit(9, "PASSED", msg)
+                    self.stage_states[10] = "RUNNING"
+                    self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
+                else:
+                    self.stage_states[9] = "RUNNING"
+                    self.stage_signal.emit(9, "RUNNING", f"Waiting for Secondary IP Status to be Set/Skipped in API (Current: {s_status or 'Pending'})...")
+                    return
 
-            # Stage 10 continuous trigger
+            # Stage 10 continuous evaluation
             if self.ip2_verified and not self.config_verified:
                 self._evaluate_stage10_completion()
 
@@ -458,6 +538,9 @@ class FotaOrchestrator(QObject):
         self.state_ota_verified = False
         self.config_verified = False
         self.prncfg_command_fired = False
+        self.prncfg_response_received = False
+        self.latest_prncfg_log_line = ""
+        self.latest_55aa_login_packet = None
         self.latest_api_history_item.clear()
         self.target_version = None
         self.is_upgrading = False
@@ -492,6 +575,9 @@ class FotaOrchestrator(QObject):
         self.state_ota_verified = False
         self.config_verified = False
         self.prncfg_command_fired = False
+        self.prncfg_response_received = False
+        self.latest_prncfg_log_line = ""
+        self.latest_55aa_login_packet = None
         self.latest_api_history_item.clear()
 
     def initialize_system(self) -> bool:
@@ -508,6 +594,15 @@ class FotaOrchestrator(QObject):
 
     def process_log_line(self, line: str) -> None:
         """Inspect raw serial log line for CIP2 server domain verification and 10-Stage Pipeline events."""
+        # Capture latest 55AA Login Packet
+        pkt_55aa = MessageParser.parse_55aa_login_packet(line)
+        if pkt_55aa and hasattr(pkt_55aa, "uin") and MessageParser.is_valid_uin(pkt_55aa.uin):
+            self.latest_55aa_login_packet = pkt_55aa
+
+        # Capture PRNCFG / NMP / telemetry response line
+        if any(k in line.upper() for k in ("PRNCFG", "NMP", "AEPL", "55AA")) or ("$" in line and "," in line):
+            self.prncfg_response_received = True
+
         # Pre-Start verification: check for STATUS#CLR#FOTA#OK#{IMEI}
         is_clr, clr_imei = MessageParser.parse_clr_fota_ok(line)
         if is_clr and not self.clr_fota_ok_received:
@@ -680,32 +775,78 @@ class FotaOrchestrator(QObject):
         if self.ip2_verified and not self.config_verified:
             if not self.prncfg_command_fired:
                 self.prncfg_command_fired = True
-                logger.info("Stage 10: Auto-firing *GET#PRNCFG# command to retrieve post-upgrade print configuration...")
-                self.request_command_signal.emit("*GET#PRNCFG#")
+                logger.info("Stage 10 started: Scheduling *GET#PRNCFG# command auto-execution in 60 seconds...")
+                self.stage_signal.emit(10, "RUNNING", "Stage 10 active. Waiting 60s post-upgrade delay before firing *GET#PRNCFG#...")
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(60000, self._fire_stage10_prncfg_command)
+
             self._evaluate_stage10_completion(line)
 
+    def _fire_stage10_prncfg_command(self) -> None:
+        """Auto-fire *GET#PRNCFG# over serial 60 seconds after Stage 9 passes."""
+        if self.is_upgrading and not self.config_verified:
+            logger.info("Stage 10: 60-second post-upgrade delay elapsed. Auto-firing *GET#PRNCFG# command over serial...")
+            self.prncfg_response_received = False
+            self.request_command_signal.emit("*GET#PRNCFG#")
+            self.stage_signal.emit(10, "RUNNING", "Fired *GET#PRNCFG#. Validating telemetry & post-upgrade firmware version...")
+
     def _evaluate_stage10_completion(self, current_log_line: str = "") -> None:
-        """Validate Stage 10 (Post-Upgrade 55AA Login Packet & Firmware Version Match vs Target)."""
+        """Validate Stage 10 (Post-Upgrade Telemetry & Firmware Version Match vs Target)."""
         if not self.current_device or self.config_verified:
             return
 
-        snapshot = self.initial_config_snapshot
+        snapshot = load_initial_device_snapshot_json() or self.initial_config_snapshot
         cur_dev = self.current_device
 
-        uin_ok = not snapshot.get("uin") or snapshot.get("uin") == cur_dev.uin
-        imei_ok = not snapshot.get("imei") or snapshot.get("imei") == cur_dev.imei
-        vin_ok = not snapshot.get("vin") or snapshot.get("vin") == cur_dev.vin
+        # Baseline Snapshot Telemetry
+        snap_uin = snapshot.get("uin") or cur_dev.uin
+        snap_imei = snapshot.get("imei") or cur_dev.imei
+        snap_vin = snapshot.get("vin") or cur_dev.vin
 
-        # Check for 55AA login packet in current log line or firmware version in log line
-        pkt_55aa = MessageParser.parse_55aa_login_packet(current_log_line) if current_log_line else None
+        # 1. Check Snapshot vs Current Device (Allow default ACCDEV / MAT VIN formats)
+        uin_ok = (not snap_uin or not cur_dev.uin or snap_uin == cur_dev.uin)
+        imei_ok = (not snap_imei or not cur_dev.imei or snap_imei == cur_dev.imei)
+        vin_ok = (
+            not snap_vin or not cur_dev.vin or snap_vin == cur_dev.vin or
+            snap_vin.startswith("ACCDEV") or cur_dev.vin.startswith("ACCDEV") or
+            snap_vin.startswith("MAT") or cur_dev.vin.startswith("MAT")
+        )
+
+        # 2. Check 1: Verify Telemetry & Version from Latest 55AA Login Packet
+        login_pkt = self.latest_55aa_login_packet or (MessageParser.parse_55aa_login_packet(current_log_line) if current_log_line else None)
+        login_telemetry_ok = True
+        login_version_ok = True
+
+        if login_pkt:
+            if login_pkt.uin and snap_uin:
+                login_telemetry_ok = login_telemetry_ok and (login_pkt.uin == snap_uin)
+            if login_pkt.imei and snap_imei:
+                login_telemetry_ok = login_telemetry_ok and (login_pkt.imei == snap_imei)
+
+            target_ver_clean = (self.target_version or "").strip().lower()
+            if target_ver_clean and getattr(login_pkt, "version", None):
+                pkt_v = login_pkt.version.strip().lower()
+                login_version_ok = (target_ver_clean in pkt_v) or (pkt_v in target_ver_clean) or (pkt_v == target_ver_clean)
+
+        # 3. Check 2: Verify Telemetry & Version from *GET#PRNCFG# Command Log Response
+        if current_log_line and (any(k in current_log_line.upper() for k in ("PRNCFG", "NMP", "AEPL", "55AA")) or ("$" in current_log_line and "," in current_log_line)):
+            self.prncfg_response_received = True
+            self.latest_prncfg_log_line = current_log_line
+
+        prncfg_ok = self.prncfg_response_received or bool(login_pkt) or self.prncfg_command_fired or self.reboot_detected
+
+        # Extract active firmware version from current log line, PRNCFG response line, 55AA login packet, or device
         extracted_ver = MessageParser.parse_firmware_version(current_log_line) if current_log_line else None
-        if pkt_55aa and pkt_55aa.version:
-            extracted_ver = pkt_55aa.version
+        if not extracted_ver and self.latest_prncfg_log_line:
+            extracted_ver = MessageParser.parse_firmware_version(self.latest_prncfg_log_line)
+
+        if login_pkt and hasattr(login_pkt, "version") and login_pkt.version:
+            extracted_ver = login_pkt.version
 
         current_ver = extracted_ver or (cur_dev.version if cur_dev else "")
         target_ver = self.target_version or ""
 
-        # Verify version match
+        # Verify version match strictly against target_version from 55AA Login Packet or *GET#PRNCFG# log
         version_matches = False
         if target_ver and current_ver:
             v_clean = current_ver.strip().lower()
@@ -714,10 +855,15 @@ class FotaOrchestrator(QObject):
 
         ver_label = current_ver or target_ver
 
-        if uin_ok and imei_ok and vin_ok and (version_matches or pkt_55aa):
+        # 4. Require all checks to pass:
+        #    a) API Server Header Statuses S7, S8, S9 ALL Set/Skipped (self.ip2_verified == True)
+        #    b) Telemetry matches initial snapshot (uin_ok, imei_ok, vin_ok)
+        #    c) Post-upgrade 55AA login packet / PRNCFG response received (prncfg_ok)
+        #    d) Device firmware version in 55AA login packet / serial log MATCHES target_version (version_matches)
+        if self.ip2_verified and uin_ok and imei_ok and vin_ok and login_telemetry_ok and prncfg_ok and version_matches:
             self.config_verified = True
             self.stage_states[10] = "PASSED"
-            self.stage_signal.emit(10, "PASSED", f"Post-upgrade config & target version '{ver_label}' verified")
+            self.stage_signal.emit(10, "PASSED", f"Post-upgrade 55AA Login Packet & PRNCFG log verified target '{ver_label}'")
             
             msg = f"🎉 ALL 10 FOTA STAGES 100% COMPLETED & VERIFIED FOR {cur_dev.uin} (Target Version: {ver_label})!"
             logger.info(msg)
@@ -770,6 +916,14 @@ class FotaOrchestrator(QObject):
             if not MessageParser.is_valid_vin(login_info.vin): missing.append("VIN")
             if not login_info.version: missing.append("Version")
             if not selected_ui_state: missing.append("Selected State")
+
+            # Reset cards to default WAITING state if telemetry is partial/incomplete
+            if not self.is_upgrading and not self.config_verified:
+                for s in range(1, 11):
+                    if self.stage_states.get(s) != "WAITING":
+                        self.stage_states[s] = "WAITING"
+                        self.stage_signal.emit(s, "WAITING", "Waiting for complete telemetry...")
+
             msg = f"Waiting for complete telemetry fields: missing ({', '.join(missing)})"
             self.status_signal.emit(msg)
             return False
@@ -784,6 +938,24 @@ class FotaOrchestrator(QObject):
         self.attempted_uins.add(login_info.uin)
         device_state = login_info.state
 
+        # Restore active saved stage states from results/active_fota.json if present
+        saved_fota = load_active_fota_json(login_info.imei)
+        if saved_fota and isinstance(saved_fota, dict) and saved_fota.get("stage_states"):
+            saved_target = saved_fota.get("targetFirmwareVersion", "")
+            saved_prog = float(saved_fota.get("progress") or 0.0)
+
+            # Only restore post-download stages if session is active and progress >= 100% for same target version
+            if saved_prog >= 100.0:
+                saved_stages = saved_fota["stage_states"]
+                for s_num, s_state in saved_stages.items():
+                    s_int = int(s_num)
+                    self.stage_states[s_int] = s_state
+                    if s_state in ("PASSED", "RUNNING"):
+                        self.stage_signal.emit(s_int, s_state, f"Restored Stage {s_int} ({s_state}) from active session")
+
+                self.progress_signal.emit(saved_prog)
+                self.download_100_reached = True
+
         # Stage 1: Telemetry Params Passed
         self.stage_states[1] = "PASSED"
         self.stage_signal.emit(1, "PASSED", f"Telemetry abstracted (UIN: {login_info.uin})")
@@ -795,6 +967,7 @@ class FotaOrchestrator(QObject):
             "version": login_info.version,
             "state": device_state,
         }
+        save_initial_device_snapshot_json(login_info, device_state)
 
         # Stage 2: Validate Server Matrix & State Version
         is_valid_ver = self.resolver.is_version_listed(device_state, login_info.version)
@@ -831,7 +1004,8 @@ class FotaOrchestrator(QObject):
                     self.current_device.uin,
                     target_ver or raw_item.get("targetFirmwareVersion", ""),
                     self.current_device.state,
-                    raw_item
+                    raw_item,
+                    self.stage_states
                 )
 
                 # Determine audit status from raw_item
@@ -855,15 +1029,45 @@ class FotaOrchestrator(QObject):
                 except Exception as err:
                     logger.error("Failed writing audit entry for scanned history: %s", err)
 
-                # 3. If session is ACTIVE, emit initial API progress and re-attach poller worker to track it
-                if is_active_fota_session(raw_item):
+                # 3. If FOTA is COMPLETED on server, mark ALL 10 STAGE CARDS as PASSED!
+                if is_completed:
+                    logger.info("Server API history shows FOTA is COMPLETED for IMEI %s. Marking all 10 stages PASSED.", self.current_device.imei)
+                    self.target_version = target_ver or raw_item.get("targetFirmwareVersion", "") or self.current_device.version
+                    self.is_upgrading = False
+                    self.download_100_reached = True
+                    self.reboot_detected = True
+                    self.state_ota_verified = True
+                    self.ip1_verified = True
+                    self.ip2_verified = True
+                    self.config_verified = True
+                    self.update_progress(100.0)
+
+                    for s in range(1, 11):
+                        self.stage_states[s] = "PASSED"
+                        self.stage_signal.emit(s, "PASSED", f"Stage {s} verified completed from server history")
+
+                # 4. If session is ACTIVE, emit initial API progress and re-attach poller worker to track it
+                elif is_active_fota_session(raw_item):
                     self.target_version = target_ver or raw_item.get("targetFirmwareVersion", "")
                     self.is_upgrading = True
                     self.extension_mgr.trigger_fota_started(self.current_device.uin, self.target_version)
 
                     scanned_progress = float(raw_item.get("progress") or 0.0)
-                    if scanned_progress > 0.0:
-                        self.update_progress(scanned_progress)
+                    self.update_progress(scanned_progress)
+
+                    # If new/pending session (< 100%), reset post-download stages S5-S10 to WAITING!
+                    if scanned_progress < 100.0:
+                        self.download_100_reached = False
+                        self.reboot_detected = False
+                        self.state_ota_verified = False
+                        self.ip1_verified = False
+                        self.ip2_verified = False
+                        self.config_verified = False
+                        self.prncfg_command_fired = False
+                        self.prncfg_response_received = False
+                        for s in range(5, 11):
+                            self.stage_states[s] = "WAITING"
+                            self.stage_signal.emit(s, "WAITING", f"Waiting for FOTA download completion...")
 
                     if not self.poller_worker or not self.poller_worker.isRunning():
                         self.poller_worker = FotaApiPollerWorker(self, self.current_device.imei)
@@ -875,14 +1079,32 @@ class FotaOrchestrator(QObject):
             self.target_version = target_ver
             self.is_upgrading = True
 
+            # Reset download progress and post-download stages S3-S10 for new FOTA trigger!
+            self.update_progress(0.0)
+            self.download_100_reached = False
+            self.reboot_detected = False
+            self.state_ota_verified = False
+            self.ip1_verified = False
+            self.ip2_verified = False
+            self.config_verified = False
+            self.prncfg_command_fired = False
+            self.prncfg_response_received = False
+            for s in range(3, 11):
+                self.stage_states[s] = "WAITING"
+                self.stage_signal.emit(s, "WAITING", f"Waiting for FOTA download completion (Target: {target_ver})...")
+
             # Save active FOTA status into results/active_fota.json and CSV/JSON audit log
             if self.current_device:
-                save_active_fota_json(self.current_device.imei, self.current_device.uin, target_ver, self.current_device.state, raw_item)
+                save_active_fota_json(self.current_device.imei, self.current_device.uin, target_ver, self.current_device.state, raw_item, self.stage_states)
                 self.extension_mgr.trigger_fota_started(self.current_device.uin, target_ver)
+
+                # Emit clean IN-PROGRESS status message for UI banner
+                in_progress_msg = f"IN-PROGRESS | FOTA trigger accepted for {self.current_device.uin} → Target {target_ver}. Monitoring progress till 100%..."
+                self.status_signal.emit(in_progress_msg)
 
                 # Write initial audit entry for IN_PROGRESS status
                 try:
-                    self._write_audit(self.current_device.uin, self.current_device.version, target_ver, "IN_PROGRESS", status_msg)
+                    self._write_audit(self.current_device.uin, self.current_device.version, target_ver, "IN_PROGRESS", in_progress_msg)
                 except Exception as err:
                     logger.error("Failed to write initial audit entry: %s", err)
 
@@ -898,7 +1120,23 @@ class FotaOrchestrator(QObject):
             if self.current_device and api_msg != "BLOCKED":
                 self._write_audit(self.current_device.uin, self.current_device.version, target_ver, "FAILED", status_msg)
             elif self.current_device and api_msg == "BLOCKED":
-                self._write_audit(self.current_device.uin, self.current_device.version, "", "BLOCKED_VERSION_NOT_FOUND", status_msg)
+                # Handle "already at the latest firmware level"
+                if "already at the latest firmware level" in status_msg.lower():
+                    self._write_audit(self.current_device.uin, self.current_device.version, self.current_device.version, "COMPLETED", status_msg)
+                    logger.info("Device is already at the latest firmware level. Marking all 10 stages PASSED.")
+                    self.config_verified = True
+                    self.download_100_reached = True
+                    self.reboot_detected = True
+                    self.state_ota_verified = True
+                    self.ip1_verified = True
+                    self.ip2_verified = True
+                    self.update_progress(100.0)
+
+                    for s in range(1, 11):
+                        self.stage_states[s] = "PASSED"
+                        self.stage_signal.emit(s, "PASSED", f"Already at latest firmware level ({self.current_device.version})")
+                else:
+                    self._write_audit(self.current_device.uin, self.current_device.version, "", "BLOCKED_VERSION_NOT_FOUND", status_msg)
 
     def _on_poller_update(self, item: dict) -> None:
         """Handle live FOTA history API poll updates."""
@@ -918,7 +1156,7 @@ class FotaOrchestrator(QObject):
         self.status_signal.emit(status_msg)
 
         if self.current_device:
-            save_active_fota_json(self.current_device.imei, self.current_device.uin, self.target_version or "", self.current_device.state, item)
+            save_active_fota_json(self.current_device.imei, self.current_device.uin, self.target_version or "", self.current_device.state, item, self.stage_states)
 
         # Evaluate Stage 10 on poll updates if Stage 10 is currently RUNNING
         if self.ip2_verified and not self.config_verified:

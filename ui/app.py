@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
-from PyQt6.QtGui import QFont, QKeySequence, QShortcut
+from PyQt6.QtGui import QFont, QKeySequence, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -254,8 +254,8 @@ class MinimalFotaWindow(QMainWindow):
         self.tab_widget.addTab(self.audit_tab, get_icon("history_blue"), "Audit Log History")
 
         # --- TAB 3: Executive Analytics & Deep Insights ---
-        self.analytics_tab = ReportingAnalyticsTabWidget(self.config)
-        self.tab_widget.addTab(self.analytics_tab, get_icon("analytics_blue"), "Analytics Reporting")
+        # self.analytics_tab = ReportingAnalyticsTabWidget(self.config)
+        # self.tab_widget.addTab(self.analytics_tab, get_icon("analytics_blue"), "Analytics Reporting")
 
         # --- TAB 4: Received Login Packets History ---
         self.login_packets_tab = LoginPacketsTableWidget()

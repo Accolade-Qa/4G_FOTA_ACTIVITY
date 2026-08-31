@@ -100,6 +100,11 @@ class MessageParser:
             return False
         return bool(cls.IMEI_PATTERN.match(imei.strip()))
 
+    INVALID_VIN_PATTERNS = re.compile(
+        r"(?:CONFIRM|DTC|DEBUG|INFO|SUPERVISION|IGNSTATUS|ACTIVEDTC|EXTBATTVOLTAGE|SYSTEM|BOOT|ANALOG|DIGITAL|ACCEL|GRAD|ROLL|TILT|SUPERVISIONFRAME|VEHICLE|SP|TEL|TASK|IDLE)",
+        re.IGNORECASE
+    )
+
     @classmethod
     def is_valid_vin(cls, vin: Optional[str]) -> bool:
         """Validate VIN consisting of 14 to 18 alphanumeric characters."""
@@ -109,6 +114,8 @@ class MessageParser:
         if len(clean) not in range(14, 19):
             return False
         if clean in INVALID_VIN_WORDS or clean.isdigit() or clean.lower() in ("null", "none", "debug", "info", "system", "analog"):
+            return False
+        if cls.INVALID_VIN_PATTERNS.search(clean):
             return False
         return bool(re.match(r"^[A-Z0-9]{14,18}$", clean))
 
