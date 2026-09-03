@@ -108,7 +108,7 @@ class Config:
     def fetch_servers_api_url(self) -> str:
         return os.getenv(
             "FETCH_SERVERS_API_URL",
-            "https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/server/getServerData?page=1&size=50&search="
+            "https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/server/getServerData?page=1&size=1000&search="
         )
 
     @property
