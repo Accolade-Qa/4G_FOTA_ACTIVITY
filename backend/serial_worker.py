@@ -1,17 +1,17 @@
 """Serial Communication Worker Module.
 
-Asynchronous serial log reader utilizing PySerial inside a PyQt6 QThread.
-Emits native PyQt signals for real-time UI logging, login packet detection,
+Asynchronous serial log reader utilizing PySerial inside a standard Python threading.Thread.
+Triggers callback functions for real-time console logging, login packet detection,
 and FOTA download progress. Integrates TelemetryAccumulator for multi-line reboot logs.
 """
 
 import time
 import logging
-from typing import List, Optional
+import threading
+from typing import List, Optional, Callable
 import serial
 import serial.tools.list_ports
 
-from PyQt6.QtCore import QThread, pyqtSignal
 from backend.message_parser import MessageParser, TelemetryAccumulator
 from backend.models import LoginPacketInfo
 
@@ -39,21 +39,30 @@ class PortInfoDetail:
         return f"{self.device} [Serial] - {short_desc or 'Serial Port'}"
 
 
-class SerialWorker(QThread):
-    """Background QThread listening to serial COM port data streams."""
+class SerialWorker(threading.Thread):
+    """Background Thread listening to serial COM port data streams."""
 
-    # PyQt6 Signals
-    raw_log_signal = pyqtSignal(str)
-    login_packet_signal = pyqtSignal(object)  # LoginPacketInfo
-    progress_signal = pyqtSignal(float)
-    sleep_countdown_signal = pyqtSignal(int)
-    sleep_event_signal = pyqtSignal(str)
-    port_status_signal = pyqtSignal(bool, str)
-
-    def __init__(self, port_name: str = "", baud_rate: int = 115200, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(
+        self,
+        port_name: str = "",
+        baud_rate: int = 115200,
+        on_raw_log: Optional[Callable[[str], None]] = None,
+        on_login_packet: Optional[Callable[[LoginPacketInfo], None]] = None,
+        on_progress: Optional[Callable[[float], None]] = None,
+        on_sleep_countdown: Optional[Callable[[int], None]] = None,
+        on_sleep_event: Optional[Callable[[str], None]] = None,
+        on_port_status: Optional[Callable[[bool, str], None]] = None,
+    ) -> None:
+        super().__init__(daemon=True)
         self.port_name = port_name
         self.baud_rate = baud_rate
+        self.on_raw_log = on_raw_log
+        self.on_login_packet = on_login_packet
+        self.on_progress = on_progress
+        self.on_sleep_countdown = on_sleep_countdown
+        self.on_sleep_event = on_sleep_event
+        self.on_port_status = on_port_status
+
         self._running = False
         self._serial_inst: Optional[serial.Serial] = None
         self._captured_login = False
@@ -75,7 +84,7 @@ class SerialWorker(QThread):
         return [p.device for p in ports]
 
     def stop(self) -> None:
-        """Signal thread to stop reading and close port cleanly without freezing main UI."""
+        """Signal thread to stop reading and close port cleanly."""
         self._running = False
         if self._serial_inst:
             try:
@@ -83,9 +92,6 @@ class SerialWorker(QThread):
                     self._serial_inst.close()
             except Exception as e:
                 logger.warning("Error closing serial port: %s", e)
-        self.quit()
-        if self.isRunning():
-            self.wait(500)
 
     def reset_login_capture(self) -> None:
         """Reset captured login packet flag and accumulator for new upgrade cycle."""
@@ -122,9 +128,10 @@ class SerialWorker(QThread):
                 target_port = available[0]
                 logger.info("Auto-detected COM port: %s", target_port)
             else:
-                msg = "No COM ports found. Please connect device and refresh."
+                msg = "No COM ports found. Please connect device and retry."
                 logger.error(msg)
-                self.port_status_signal.emit(False, msg)
+                if self.on_port_status:
+                    self.on_port_status(False, msg)
                 return
 
         try:
@@ -134,11 +141,13 @@ class SerialWorker(QThread):
                 timeout=1.0,
             )
             logger.info("Opened serial port %s at %d baud", target_port, self.baud_rate)
-            self.port_status_signal.emit(True, f"Connected: {target_port} ({self.baud_rate} baud)")
+            if self.on_port_status:
+                self.on_port_status(True, f"Connected: {target_port} ({self.baud_rate} baud)")
         except Exception as err:
             errMsg = f"Failed to open port {target_port}: {err}"
             logger.error(errMsg)
-            self.port_status_signal.emit(False, errMsg)
+            if self.on_port_status:
+                self.on_port_status(False, errMsg)
             return
 
         buffer = ""
@@ -157,21 +166,23 @@ class SerialWorker(QThread):
                     cleaned = MessageParser.strip_ansi(line).strip()
 
                     if cleaned:
-                        # Emit raw log for UI terminal view
-                        self.raw_log_signal.emit(cleaned)
+                        # Raw log callback
+                        if self.on_raw_log:
+                            self.on_raw_log(cleaned)
 
                         # Check for FOTA download progress percentage
                         prog = MessageParser.parse_download_progress(cleaned)
-                        if prog is not None:
-                            self.progress_signal.emit(prog)
+                        if prog is not None and self.on_progress:
+                            self.on_progress(prog)
 
                         # Check for [PLA] SLEEP countdown timer & sleep events
-                        if MessageParser.is_sleep_event(cleaned):
-                            self.sleep_event_signal.emit(cleaned)
+                        if MessageParser.is_sleep_event(cleaned) and self.on_sleep_event:
+                            self.on_sleep_event(cleaned)
 
                         sleep_sec = MessageParser.parse_pla_sleep_countdown(cleaned)
                         if sleep_sec is not None:
-                            self.sleep_countdown_signal.emit(sleep_sec)
+                            if self.on_sleep_countdown:
+                                self.on_sleep_countdown(sleep_sec)
                             if sleep_sec == 0:
                                 logger.info("PLA Sleep countdown reached 0s (Soft Shutdown/Sleep). Resetting login capture for post-reboot logs.")
                                 self.reset_login_capture()
@@ -180,12 +191,13 @@ class SerialWorker(QThread):
                         if "55AA" in cleaned:
                             pkts_55aa = MessageParser.parse_all_55aa_login_packets(cleaned)
                             for pkt in pkts_55aa:
-                                self.login_packet_signal.emit(pkt)
+                                if self.on_login_packet:
+                                    self.on_login_packet(pkt)
 
-                        # 2. Harvest telemetry across multi-line reboot logs or AT responses (*GET#PRNCFG#) for main window header & orchestrator
+                        # 2. Harvest telemetry across multi-line reboot logs or AT responses (*GET#PRNCFG#) for orchestrator
                         info = self.accumulator.feed_line(cleaned)
-                        if info and not ("55AA" in cleaned):
-                            self.login_packet_signal.emit(info)
+                        if info and not ("55AA" in cleaned) and self.on_login_packet:
+                            self.on_login_packet(info)
 
             except Exception as err:
                 if self._running:

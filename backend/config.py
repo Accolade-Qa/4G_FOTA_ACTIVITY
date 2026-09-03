@@ -57,7 +57,7 @@ class Config:
         self.logs_dir = self.base_dir / "logs"
 
         self.firmware_json_path = self.input_dir / "servers.json"
-        self.audit_csv_path = self.results_dir / "fota_audit.csv"
+        self.audit_csv_path = self.results_dir / "fota_results.csv"
         self.login_json_path = self.results_dir / "login_packets.json"
         self._ensure_directories()
 

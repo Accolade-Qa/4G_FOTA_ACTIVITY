@@ -37,6 +37,13 @@ class FirmwareResolver:
             logger.error("Failed to parse firmware JSON: %s", err)
             return False
 
+    def get_all_states(self) -> List[str]:
+        """Retrieve list of all state names configured in the matrix."""
+        states = self.matrix.get("states", {})
+        if isinstance(states, dict):
+            return list(states.keys())
+        return []
+
     def is_version_listed(self, state_name: str, version: str) -> bool:
         """Check whether version exists in state configuration."""
         return self.validate_version_exists(state_name, version)
