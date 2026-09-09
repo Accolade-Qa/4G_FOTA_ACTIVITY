@@ -44,6 +44,8 @@ class MessageParser:
     CLR_FOTA_OK_PATTERN = re.compile(r"STATUS#CLR#FOTA#OK#(?:(\d{13,15}))?", re.IGNORECASE)
     CHTP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CHTP#|\*SET#CHTP#|CHTP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CHTP#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
     CIP1_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP1#|\*SET#CIP1#|CIP1:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP1#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
+    CIP2_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP2#|\*SET#CIP2#|CIP2:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP2#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
+    CIP3_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP3#|\*SET#CIP3#|CIP3:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP3#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
     SWEMP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#SWEMP#|\*SET#SWEMP#|SWEMP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#SWEMP#)([\w.-]+)", re.IGNORECASE)
     REBOOT_PATTERNS = [
         re.compile(r"STATUS#CLR#FOTA#OK", re.IGNORECASE),
@@ -279,6 +281,32 @@ class MessageParser:
         if not clean_line:
             return None
         match = cls.CIP1_FULL_PATTERN.search(clean_line)
+        if match:
+            ip = match.group(1).strip()
+            port = match.group(2).strip() if match.group(2) else ""
+            return ip, port
+        return None
+
+    @classmethod
+    def parse_cip2_tertiary_ip_port(cls, line: str) -> Optional[Tuple[str, str]]:
+        """Extract tertiary server CIP2 (IP3) and Port tuple from tcp ota log line."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return None
+        match = cls.CIP2_FULL_PATTERN.search(clean_line)
+        if match:
+            ip = match.group(1).strip()
+            port = match.group(2).strip() if match.group(2) else ""
+            return ip, port
+        return None
+
+    @classmethod
+    def parse_cip3_quaternary_ip_port(cls, line: str) -> Optional[Tuple[str, str]]:
+        """Extract quaternary server CIP3 (IP4) and Port tuple from tcp ota log line."""
+        clean_line = cls.strip_ansi(line)
+        if not clean_line:
+            return None
+        match = cls.CIP3_FULL_PATTERN.search(clean_line)
         if match:
             ip = match.group(1).strip()
             port = match.group(2).strip() if match.group(2) else ""

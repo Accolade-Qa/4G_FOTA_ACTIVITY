@@ -116,5 +116,25 @@ class TestTelemetryAccumulator(unittest.TestCase):
         self.assertEqual(info.version, "5.2.9_REL13")
 
 
+class TestIpPortParsing(unittest.TestCase):
+    """Test suite for primary, secondary, tertiary, and quaternary IP/Port log parsing."""
+
+    def test_parse_chtp_ip1_and_port(self):
+        res = MessageParser.parse_chtp_primary_ip_port("*SET#CHTP#10.2.1.5#6100#")
+        self.assertEqual(res, ("10.2.1.5", "6100"))
+
+    def test_parse_cip1_ip2_and_port(self):
+        res = MessageParser.parse_cip1_secondary_ip_port("STATUS#SET#CIP1#10.2.1.6#6101#")
+        self.assertEqual(res, ("10.2.1.6", "6101"))
+
+    def test_parse_cip2_ip3_and_port(self):
+        res = MessageParser.parse_cip2_tertiary_ip_port("STATUS#SET#CIP2#10.2.1.7#6102#")
+        self.assertEqual(res, ("10.2.1.7", "6102"))
+
+    def test_parse_cip3_ip4_and_port(self):
+        res = MessageParser.parse_cip3_quaternary_ip_port("STATUS#SET#CIP3#10.2.1.8#6103#")
+        self.assertEqual(res, ("10.2.1.8", "6103"))
+
+
 if __name__ == "__main__":
     unittest.main()

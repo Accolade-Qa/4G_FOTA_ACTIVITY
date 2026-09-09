@@ -226,6 +226,8 @@ class TestFota10StagesActualData(unittest.TestCase):
         self.orchestrator.state_ota_verified = True
         self.orchestrator.ip1_verified = True
         self.orchestrator.ip2_verified = True
+        self.orchestrator.ip3_verified = True
+        self.orchestrator.ip4_verified = True
 
         # Process post-upgrade log line
         self.orchestrator.process_log_line(ActualFotaStageTestData.LOG_PRNCFG_SOFTWARE)

@@ -52,9 +52,13 @@ class FirmwareResolver:
                 "port1": str(state_entry.get("port1", "") or state_entry.get("primaryPort", "")),
                 "ip2": str(state_entry.get("govtIp2", "") or state_entry.get("ip2", "") or state_entry.get("secondaryIp", "")),
                 "port2": str(state_entry.get("port2", "") or state_entry.get("secondaryPort", "")),
+                "ip3": str(state_entry.get("govtIp3", "") or state_entry.get("ip3", "") or state_entry.get("tertiaryIp", "")),
+                "port3": str(state_entry.get("port3", "") or state_entry.get("tertiaryPort", "")),
+                "ip4": str(state_entry.get("govtIp4", "") or state_entry.get("ip4", "") or state_entry.get("quaternaryIp", "")),
+                "port4": str(state_entry.get("port4", "") or state_entry.get("quaternaryPort", "")),
                 "state_enable": str(state_entry.get("stateEnable", "") or state_entry.get("state_enabled_ota", "")),
             }
-        return {"state_abbreviation": "", "ip1": "", "port1": "", "ip2": "", "port2": "", "state_enable": ""}
+        return {"state_abbreviation": "", "ip1": "", "port1": "", "ip2": "", "port2": "", "ip3": "", "port3": "", "ip4": "", "port4": "", "state_enable": ""}
 
     def _get_raw_versions_list(self, state_name: str) -> List[Any]:
         states = self.matrix.get("states", {})

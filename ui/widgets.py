@@ -565,8 +565,8 @@ class StageProgressionWidget(QFrame):
         "S5: 100% Downloaded",
         "S6: Device Reboot",
         "S7: State OTA Fired",
-        "S8: IP1 & Port Set",
-        "S9: IP2 & Port Set",
+        "S8: Primary CHTP IP1",
+        "S9: Server IPs Phase",
         "S10: Config Verified"
     ]
 

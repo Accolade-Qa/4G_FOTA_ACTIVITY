@@ -390,6 +390,8 @@ class FotaOrchestrator(QObject):
         self.reboot_detected: bool = False
         self.ip1_verified: bool = False
         self.ip2_verified: bool = False
+        self.ip3_verified: bool = False
+        self.ip4_verified: bool = False
         self.state_ota_verified: bool = False
         self.config_verified: bool = False
         self.prncfg_command_fired: bool = False
@@ -429,30 +431,36 @@ class FotaOrchestrator(QObject):
         )
 
     def check_api_server_statuses_set(self, item: dict) -> Tuple[bool, str]:
-        """Validate if State Enable OTA, Primary IP, and Secondary IP statuses from API response are all 'SET' or 'SKIPPED'."""
+        """Validate if State Enable OTA, Primary IP, Secondary IP, Tertiary IP, and Quaternary IP statuses from API response are all 'SET' or 'SKIPPED'."""
         if not isinstance(item, dict) or not item:
             return True, "Default SET (Local serial verification mode)"
 
         swemp_val = self._extract_api_field(item, ["stateEnableOtaStatus", "swempStatus", "stateEnableStatus", "stateEnabledOtaStatus", "swemp"]) or "SET"
-        chtp_val = self._extract_api_field(item, ["primaryIpStatus", "chtpStatus", "primaryIp1Status", "ip1Status", "primaryip"]) or "SET"
-        cip1_val = self._extract_api_field(item, ["secondaryIpStatus", "cip1Status", "secondaryIp2Status", "ip2Status", "secondaryip"]) or "SET"
+        chtp_val = self._extract_api_field(item, ["primaryIpStatus", "chtpStatus", "primaryIp1Status", "ip1Status", "primaryip", "govtIp1Status"]) or "SET"
+        cip1_val = self._extract_api_field(item, ["secondaryIpStatus", "cip1Status", "secondaryIp2Status", "ip2Status", "secondaryip", "govtIp2Status"]) or "SET"
+        cip2_val = self._extract_api_field(item, ["tertiaryIpStatus", "cip2Status", "tertiaryIp3Status", "ip3Status", "tertiaryip", "govtIp3Status"]) or "SET"
+        cip3_val = self._extract_api_field(item, ["quaternaryIpStatus", "cip3Status", "quaternaryIp4Status", "ip4Status", "quaternaryip", "govtIp4Status"]) or "SET"
 
         swemp_ok = self._is_valid_passed_or_skipped(swemp_val)
         chtp_ok = self._is_valid_passed_or_skipped(chtp_val)
         cip1_ok = self._is_valid_passed_or_skipped(cip1_val)
+        cip2_ok = self._is_valid_passed_or_skipped(cip2_val)
+        cip3_ok = self._is_valid_passed_or_skipped(cip3_val)
 
-        if swemp_ok and chtp_ok and cip1_ok:
-            return True, f"API Server Header Statuses: State Enable OTA={swemp_val}, Primary IP={chtp_val}, Secondary IP={cip1_val} (ALL SET/SKIPPED)"
+        if swemp_ok and chtp_ok and cip1_ok and cip2_ok and cip3_ok:
+            return True, f"API Server Header Statuses: State Enable OTA={swemp_val}, Primary IP={chtp_val}, Secondary IP={cip1_val}, Tertiary IP={cip2_val}, Quaternary IP={cip3_val} (ALL SET/SKIPPED)"
 
         missing = []
         if not swemp_ok: missing.append(f"State Enable OTA Status ('{swemp_val}' != 'SET/SKIPPED')")
         if not chtp_ok: missing.append(f"Primary IP Status ('{chtp_val}' != 'SET/SKIPPED')")
         if not cip1_ok: missing.append(f"Secondary IP Status ('{cip1_val}' != 'SET/SKIPPED')")
+        if not cip2_ok: missing.append(f"Tertiary IP Status ('{cip2_val}' != 'SET/SKIPPED')")
+        if not cip3_ok: missing.append(f"Quaternary IP Status ('{cip3_val}' != 'SET/SKIPPED')")
 
         return False, f"Waiting for API server header statuses to be SET/SKIPPED: {', '.join(missing)}"
 
     def _evaluate_api_skipped_stages(self) -> None:
-        """Check if API response has Primary IP Status or Secondary IP Status marked as 'Skipped' / 'Set' and pass stages directly."""
+        """Check if API response has Primary/Secondary/Tertiary/Quaternary IP Status marked as 'Skipped' / 'Set' and pass stages directly."""
         if not isinstance(self.latest_api_history_item, dict) or not self.latest_api_history_item:
             return
 
@@ -460,11 +468,15 @@ class FotaOrchestrator(QObject):
 
         p_status = self._extract_api_field(item, ["primaryIpStatus", "primaryIPStatus", "chtpStatus", "primaryIp1Status", "ip1Status", "primaryip", "govtIp1Status"])
         s_status = self._extract_api_field(item, ["secondaryIpStatus", "secondaryIPStatus", "cip1Status", "secondaryIp2Status", "ip2Status", "secondaryip", "govtIp2Status"])
+        t_status = self._extract_api_field(item, ["tertiaryIpStatus", "tertiaryIPStatus", "cip2Status", "tertiaryIp3Status", "ip3Status", "tertiaryip", "govtIp3Status"])
+        q_status = self._extract_api_field(item, ["quaternaryIpStatus", "quaternaryIPStatus", "cip3Status", "quaternaryIp4Status", "ip4Status", "quaternaryip", "govtIp4Status"])
         state_status = self._extract_api_field(item, ["stateEnableOtaStatus", "swempStatus", "stateEnableStatus", "stateEnabledOtaStatus", "swemp"])
         dev_fota_status = self._extract_api_field(item, ["deviceFotaStatus", "deviceFotaCompletionStatus", "fotaStatus", "status"])
 
         p_ok = self._is_valid_passed_or_skipped(p_status)
         s_ok = self._is_valid_passed_or_skipped(s_status)
+        t_ok = self._is_valid_passed_or_skipped(t_status)
+        q_ok = self._is_valid_passed_or_skipped(q_status)
         swemp_ok = self._is_valid_passed_or_skipped(state_status)
         dev_fota_upper = dev_fota_status.upper()
         is_completed_api = any(kw in dev_fota_upper for kw in ("COMPLET", "SKIPPED", "SKIP", "PASSED", "SUCCESS", "TRUE"))
@@ -505,12 +517,14 @@ class FotaOrchestrator(QObject):
                     self.stage_signal.emit(8, "RUNNING", f"Waiting for Primary IP Status to be Set/Skipped in API (Current: {p_status or 'Pending'})...")
                     return
 
-            # Stage 9 (Secondary CIP1 IP2)
-            if self.ip1_verified and not self.ip2_verified:
-                if s_ok or is_completed_api:
+            # Stage 9 (Secondary/Tertiary/Quaternary IP Phase - CIP1 IP2, CIP2 IP3, CIP3 IP4)
+            if self.ip1_verified and not (self.ip2_verified and self.ip3_verified and self.ip4_verified):
+                if (s_ok and t_ok and q_ok) or is_completed_api:
                     self.ip2_verified = True
+                    self.ip3_verified = True
+                    self.ip4_verified = True
                     lbl = s_status or ("Completed" if is_completed_api else "Set")
-                    msg = f"Secondary CIP1 IP2 verified ({lbl} in API response)"
+                    msg = f"Server IPs phase (CIP1 IP2, CIP2 IP3, CIP3 IP4) verified ({lbl} in API response)"
                     logger.info("Stage 9: %s. Stage PASSED directly.", msg)
                     self.stage_states[9] = "PASSED"
                     self.stage_signal.emit(9, "PASSED", msg)
@@ -518,11 +532,11 @@ class FotaOrchestrator(QObject):
                     self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
                 else:
                     self.stage_states[9] = "RUNNING"
-                    self.stage_signal.emit(9, "RUNNING", f"Waiting for Secondary IP Status to be Set/Skipped in API (Current: {s_status or 'Pending'})...")
+                    self.stage_signal.emit(9, "RUNNING", f"Waiting for Server IPs (IP2/IP3/IP4) Statuses to be Set/Skipped in API...")
                     return
 
             # Stage 10 continuous evaluation
-            if self.ip2_verified and not self.config_verified:
+            if self.ip1_verified and self.ip2_verified and self.ip3_verified and self.ip4_verified and not self.config_verified:
                 self._evaluate_stage10_completion()
 
     def prepare_next_fota_cycle(self) -> None:
@@ -578,6 +592,8 @@ class FotaOrchestrator(QObject):
         self.reboot_detected = False
         self.ip1_verified = False
         self.ip2_verified = False
+        self.ip3_verified = False
+        self.ip4_verified = False
         self.state_ota_verified = False
         self.config_verified = False
         self.prncfg_command_fired = False
@@ -678,6 +694,8 @@ class FotaOrchestrator(QObject):
         meta = self.resolver.get_state_server_metadata(self.current_device.state if self.current_device else "")
         has_ip1 = bool(meta.get("ip1") and str(meta.get("ip1")).strip())
         has_ip2 = bool(meta.get("ip2") and str(meta.get("ip2")).strip())
+        has_ip3 = bool(meta.get("ip3") and str(meta.get("ip3")).strip())
+        has_ip4 = bool(meta.get("ip4") and str(meta.get("ip4")).strip())
         has_state_enable = bool(meta.get("state_enable") and str(meta.get("state_enable")).strip())
 
         # Stage 7: SWEMP State Enabled OTA Verification (*SET#SWEMP#<state>#)
@@ -722,7 +740,7 @@ class FotaOrchestrator(QObject):
                 self.stage_states[8] = "PASSED"
                 self.stage_signal.emit(8, "PASSED", msg)
                 self.stage_states[9] = "RUNNING"
-                self.stage_signal.emit(9, "RUNNING", "Validating Secondary Server CIP1 IP2 & Port2...")
+                self.stage_signal.emit(9, "RUNNING", "Validating Server IPs Phase (CIP1 IP2, CIP2 IP3, CIP3 IP4)...")
             else:
                 target_ip = str(meta.get("ip1", "")).strip()
                 target_port = str(meta.get("port1", "")).strip()
@@ -732,7 +750,6 @@ class FotaOrchestrator(QObject):
                 is_255_chtp = "255.255.255.255" in line or (chtp_tuple and MessageParser.is_unconfigured_ip(chtp_tuple[0]))
 
                 if is_255_chtp:
-                    # Unconfigured 255.255.255.255 state -> Must wait for set command response (*SET#CHTP#)
                     logger.debug("Stage 8: CHTP unconfigured 255.255.255.255 detected. Waiting for set command response...")
                 elif chtp_tuple or ("CHTP" in line and ("." in line or ":" in line)):
                     parsed_ip = chtp_tuple[0] if chtp_tuple else ""
@@ -745,7 +762,7 @@ class FotaOrchestrator(QObject):
                         self.stage_states[8] = "PASSED"
                         self.stage_signal.emit(8, "PASSED", msg)
                         self.stage_states[9] = "RUNNING"
-                        self.stage_signal.emit(9, "RUNNING", "Validating Secondary Server CIP1 IP2 & Port2...")
+                        self.stage_signal.emit(9, "RUNNING", "Validating Server IPs Phase (CIP1 IP2, CIP2 IP3, CIP3 IP4)...")
                     elif parsed_ip and target_ip and (parsed_ip.lower() == target_ip.lower()):
                         self.ip1_verified = True
                         msg = f"ALREADY SET (Primary CHTP IP1 {parsed_ip}:{parsed_port or target_port} matches target matrix)"
@@ -753,56 +770,68 @@ class FotaOrchestrator(QObject):
                         self.stage_states[8] = "PASSED"
                         self.stage_signal.emit(8, "PASSED", msg)
                         self.stage_states[9] = "RUNNING"
-                        self.stage_signal.emit(9, "RUNNING", "Validating Secondary Server CIP1 IP2 & Port2...")
+                        self.stage_signal.emit(9, "RUNNING", "Validating Server IPs Phase (CIP1 IP2, CIP2 IP3, CIP3 IP4)...")
                     elif parsed_ip:
                         logger.info("Stage 8: Device CHTP IP '%s' differs from target IP '%s'. Waiting for *SET#CHTP# response from log...", parsed_ip, target_ip)
 
-        # Stage 9: Secondary Server CIP1 IP2 & Port2 Verification (*SET#CIP1#<ip>#<port>#)
-        if self.ip1_verified and not self.ip2_verified:
+        # Stage 9: Server IPs & Ports Phase Verification (CIP1 IP2, CIP2 IP3, CIP3 IP4)
+        if self.ip1_verified and not (self.ip2_verified and self.ip3_verified and self.ip4_verified):
+            # 1. IP2 (CIP1) Evaluation
             if not has_ip2:
                 self.ip2_verified = True
-                msg = "NOT PRESENT (Secondary IP2/Port2 not configured in servers.json matrix)"
-                logger.info("Stage 9: %s. Stage marked NOT PRESENT and passed.", msg)
+            elif not self.ip2_verified:
+                target_ip2 = str(meta.get("ip2", "")).strip()
+                target_port2 = str(meta.get("port2", "")).strip()
+                cip1_tuple = MessageParser.parse_cip1_secondary_ip_port(line)
+                is_255_cip1 = "255.255.255.255" in line or (cip1_tuple and MessageParser.is_unconfigured_ip(cip1_tuple[0]))
+                if not is_255_cip1 and (cip1_tuple or ("CIP1" in line and ("." in line or ":" in line))):
+                    parsed_ip2 = cip1_tuple[0] if cip1_tuple else ""
+                    parsed_port2 = cip1_tuple[1] if cip1_tuple else ""
+                    if "STATUS#SET#CIP1#" in line or "*SET#CIP1#" in line or (parsed_ip2 and target_ip2 and parsed_ip2.lower() == target_ip2.lower()):
+                        self.ip2_verified = True
+                        logger.info("Stage 9: Secondary CIP1 IP2 (%s:%s) verified.", parsed_ip2 or target_ip2, parsed_port2 or target_port2)
+
+            # 2. IP3 (CIP2) Evaluation
+            if not has_ip3:
+                self.ip3_verified = True
+            elif not self.ip3_verified:
+                target_ip3 = str(meta.get("ip3", "")).strip()
+                target_port3 = str(meta.get("port3", "")).strip()
+                cip2_tuple = MessageParser.parse_cip2_tertiary_ip_port(line)
+                is_255_cip2 = "255.255.255.255" in line or (cip2_tuple and MessageParser.is_unconfigured_ip(cip2_tuple[0]))
+                if not is_255_cip2 and (cip2_tuple or ("CIP2" in line and ("." in line or ":" in line))):
+                    parsed_ip3 = cip2_tuple[0] if cip2_tuple else ""
+                    parsed_port3 = cip2_tuple[1] if cip2_tuple else ""
+                    if "STATUS#SET#CIP2#" in line or "*SET#CIP2#" in line or (parsed_ip3 and target_ip3 and parsed_ip3.lower() == target_ip3.lower()):
+                        self.ip3_verified = True
+                        logger.info("Stage 9: Tertiary CIP2 IP3 (%s:%s) verified.", parsed_ip3 or target_ip3, parsed_port3 or target_port3)
+
+            # 3. IP4 (CIP3) Evaluation
+            if not has_ip4:
+                self.ip4_verified = True
+            elif not self.ip4_verified:
+                target_ip4 = str(meta.get("ip4", "")).strip()
+                target_port4 = str(meta.get("port4", "")).strip()
+                cip3_tuple = MessageParser.parse_cip3_quaternary_ip_port(line)
+                is_255_cip3 = "255.255.255.255" in line or (cip3_tuple and MessageParser.is_unconfigured_ip(cip3_tuple[0]))
+                if not is_255_cip3 and (cip3_tuple or ("CIP3" in line and ("." in line or ":" in line))):
+                    parsed_ip4 = cip3_tuple[0] if cip3_tuple else ""
+                    parsed_port4 = cip3_tuple[1] if cip3_tuple else ""
+                    if "STATUS#SET#CIP3#" in line or "*SET#CIP3#" in line or (parsed_ip4 and target_ip4 and parsed_ip4.lower() == target_ip4.lower()):
+                        self.ip4_verified = True
+                        logger.info("Stage 9: Quaternary CIP3 IP4 (%s:%s) verified.", parsed_ip4 or target_ip4, parsed_port4 or target_port4)
+
+            # Check if all IP server settings in phase are verified
+            if self.ip2_verified and self.ip3_verified and self.ip4_verified:
+                msg = "Server IPs Phase (CIP1 IP2, CIP2 IP3, CIP3 IP4) fully verified"
+                logger.info("Stage 9: %s", msg)
                 self.stage_states[9] = "PASSED"
                 self.stage_signal.emit(9, "PASSED", msg)
                 self.stage_states[10] = "RUNNING"
                 self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
-            else:
-                target_ip2 = str(meta.get("ip2", "")).strip()
-                target_port2 = str(meta.get("port2", "")).strip()
-                cip1_tuple = MessageParser.parse_cip1_secondary_ip_port(line)
-
-                # Check if response line shows unconfigured default factory state 255.255.255.255
-                is_255_cip = "255.255.255.255" in line or (cip1_tuple and MessageParser.is_unconfigured_ip(cip1_tuple[0]))
-
-                if is_255_cip:
-                    # Unconfigured 255.255.255.255 state -> Must wait for set command response (*SET#CIP1#)
-                    logger.debug("Stage 9: CIP1 unconfigured 255.255.255.255 detected. Waiting for set command response...")
-                elif cip1_tuple or ("CIP1" in line and ("." in line or ":" in line)):
-                    parsed_ip2 = cip1_tuple[0] if cip1_tuple else ""
-                    parsed_port2 = cip1_tuple[1] if cip1_tuple else ""
-
-                    if "STATUS#SET#CIP1#" in line or "*SET#CIP1#" in line:
-                        self.ip2_verified = True
-                        msg = f"Secondary CIP1 IP2 ({parsed_ip2 or target_ip2}:{parsed_port2 or target_port2}) verified"
-                        logger.info("Stage 9: %s", msg)
-                        self.stage_states[9] = "PASSED"
-                        self.stage_signal.emit(9, "PASSED", msg)
-                        self.stage_states[10] = "RUNNING"
-                        self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
-                    elif parsed_ip2 and target_ip2 and (parsed_ip2.lower() == target_ip2.lower()):
-                        self.ip2_verified = True
-                        msg = f"ALREADY SET (Secondary CIP1 IP2 {parsed_ip2}:{parsed_port2 or target_port2} matches target matrix)"
-                        logger.info("Stage 9: %s. Passed without waiting for set command.", msg)
-                        self.stage_states[9] = "PASSED"
-                        self.stage_signal.emit(9, "PASSED", msg)
-                        self.stage_states[10] = "RUNNING"
-                        self.stage_signal.emit(10, "RUNNING", "Validating 55AA Login Packet post-upgrade firmware version...")
-                    elif parsed_ip2:
-                        logger.info("Stage 9: Device CIP1 IP '%s' differs from target IP '%s'. Waiting for *SET#CIP1# response from log...", parsed_ip2, target_ip2)
 
         # Stage 10: Continuously evaluate post-upgrade 55AA Login Packet & Firmware Version on EVERY line
-        if self.ip2_verified and not self.config_verified:
+        if self.ip2_verified and self.ip3_verified and self.ip4_verified and not self.config_verified:
             if not self.prncfg_command_fired:
                 self.prncfg_command_fired = True
                 logger.info("Stage 10 started: Scheduling *GET#PRNCFG# command auto-execution in 60 seconds...")
@@ -1135,6 +1164,8 @@ class FotaOrchestrator(QObject):
                     self.state_ota_verified = True
                     self.ip1_verified = True
                     self.ip2_verified = True
+                    self.ip3_verified = True
+                    self.ip4_verified = True
                     self.config_verified = True
                     self.update_progress(100.0)
 
@@ -1158,6 +1189,8 @@ class FotaOrchestrator(QObject):
                         self.state_ota_verified = False
                         self.ip1_verified = False
                         self.ip2_verified = False
+                        self.ip3_verified = False
+                        self.ip4_verified = False
                         self.config_verified = False
                         self.prncfg_command_fired = False
                         self.prncfg_response_received = False
@@ -1182,6 +1215,8 @@ class FotaOrchestrator(QObject):
             self.state_ota_verified = False
             self.ip1_verified = False
             self.ip2_verified = False
+            self.ip3_verified = False
+            self.ip4_verified = False
             self.config_verified = False
             self.prncfg_command_fired = False
             self.prncfg_response_received = False
@@ -1226,6 +1261,8 @@ class FotaOrchestrator(QObject):
                     self.state_ota_verified = True
                     self.ip1_verified = True
                     self.ip2_verified = True
+                    self.ip3_verified = True
+                    self.ip4_verified = True
                     self.update_progress(100.0)
 
                     for s in range(1, 11):

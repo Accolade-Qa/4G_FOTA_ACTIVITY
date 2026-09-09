@@ -246,6 +246,10 @@ class FotaApiClient:
                     port1 = item.get("port1") if item.get("port1") is not None else item.get("primaryPort")
                     ip2 = item.get("govtIp2") or item.get("ip2") or item.get("secondaryIp") or ""
                     port2 = item.get("port2") if item.get("port2") is not None else item.get("secondaryPort")
+                    ip3 = item.get("govtIp3") or item.get("ip3") or item.get("tertiaryIp") or ""
+                    port3 = item.get("port3") if item.get("port3") is not None else item.get("tertiaryPort")
+                    ip4 = item.get("govtIp4") or item.get("ip4") or item.get("quaternaryIp") or ""
+                    port4 = item.get("port4") if item.get("port4") is not None else item.get("quaternaryPort")
                     state_enable = item.get("stateEnable") or item.get("state_enabled_ota") or item.get("stateEnabledOta") or ""
                     state_abbr = item.get("stateAbbreviation") or item.get("state_abbreviation") or item.get("stateAbbr") or item.get("state_abbr") or ""
 
@@ -255,6 +259,10 @@ class FotaApiClient:
                         "port1": str(port1) if port1 is not None else "",
                         "govtIp2": str(ip2),
                         "port2": str(port2) if port2 is not None else "",
+                        "govtIp3": str(ip3),
+                        "port3": str(port3) if port3 is not None else "",
+                        "govtIp4": str(ip4),
+                        "port4": str(port4) if port4 is not None else "",
                         "stateEnable": str(state_enable),
                         "firmwares": firmwares_for_state
                     }
