@@ -42,9 +42,9 @@ class MessageParser:
     CIP2_PATTERN = re.compile(r"(?:CIP2|CIP\s*2|IP2|MQTT\s*Server|SERVER2|SERVER\s*2)[:=,\s]+([A-Za-z0-9._-]+)", re.IGNORECASE)
     PLA_SLEEP_PATTERN = re.compile(r"\[PLA\]\s*SLEEP\s+(\d+)", re.IGNORECASE)
     CLR_FOTA_OK_PATTERN = re.compile(r"STATUS#CLR#FOTA#OK#(?:(\d{13,15}))?", re.IGNORECASE)
-    CHTP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CHTP#|\*SET#CHTP#|CHTP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CHTP#|STATUS#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
-    CIP1_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP1#|\*SET#CIP1#|CIP1:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP1#|STATUS#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
-    SWEMP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#SWEMP#|\*SET#SWEMP#|SWEMP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#SWEMP#|STATUS#)([\w.-]+)", re.IGNORECASE)
+    CHTP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CHTP#|\*SET#CHTP#|CHTP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CHTP#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
+    CIP1_FULL_PATTERN = re.compile(r"(?:STATUS#SET#CIP1#|\*SET#CIP1#|CIP1:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#CIP1#)([\w.-]+)[#:\s,]+(\d+)", re.IGNORECASE)
+    SWEMP_FULL_PATTERN = re.compile(r"(?:STATUS#SET#SWEMP#|\*SET#SWEMP#|SWEMP:|[FOT]\s*tcp\s*ota\s*request\s*:\s*\*SET#SWEMP#)([\w.-]+)", re.IGNORECASE)
     REBOOT_PATTERNS = [
         re.compile(r"STATUS#CLR#FOTA#OK", re.IGNORECASE),
         re.compile(r"CLR#FOTA#OK", re.IGNORECASE),
