@@ -195,27 +195,51 @@ class MessageParser:
         return False
 
     @classmethod
+    def is_hw_line(cls, line: str) -> bool:
+        """Check if serial log line starts with $HW indicating Line Automation hardware version telemetry."""
+        clean_line = cls.strip_ansi(line).strip()
+        if not clean_line:
+            return False
+        return clean_line.startswith("$HW") or clean_line.startswith("$HW,")
+
+    @classmethod
+    def is_fw_line(cls, line: str) -> bool:
+        """Check if serial log line starts with $FW indicating Line Automation firmware version telemetry."""
+        clean_line = cls.strip_ansi(line).strip()
+        if not clean_line:
+            return False
+        return clean_line.startswith("$FW") or clean_line.startswith("$FW,")
+
+    @classmethod
     def parse_firmware_version(cls, line: str) -> Optional[str]:
-        """Extract full firmware version string (e.g. '5.2.9 5th IP') strictly from 'aeplFwVer', 'SOFTWARE :', or 'FIRMWARE :' log formats."""
+        """Extract full firmware version string (e.g. '5.2.9 5th IP') strictly from 'aeplFwVer', 'SOFTWARE :', 'FIRMWARE :', or '$FW,' log formats."""
         clean_line = cls.strip_ansi(line)
         if not clean_line or "sver" in clean_line.lower() or "version |" in clean_line.lower():
             return None
 
-        # 1. Match 'aeplFwVer    5.2.9 5th IP' or 'aeplFwVer : 5.2.9 5th IP'
+        # 1. Match '$FW,5.2.9_REL13,L89HANR01A07S,EC20CEHDLGR06A10M1G' -> extract '5.2.9_REL13'
+        if clean_line.startswith("$FW,") or clean_line.startswith("$FW"):
+            parts = clean_line.split(",")
+            if len(parts) >= 2 and parts[1].strip():
+                val = parts[1].strip()
+                if val and val.lower() not in ("succ", "ok", "idle", "falcon", "atcu", "none", "null"):
+                    return val
+
+        # 2. Match 'aeplFwVer    5.2.9 5th IP' or 'aeplFwVer : 5.2.9 5th IP'
         m1 = re.search(r"aeplFwVer[\s:=]+([0-9]+\.[0-9]+[^\r\n#]*)", clean_line, re.IGNORECASE)
         if m1:
             val = re.sub(r"#+", "", m1.group(1)).strip()
             if val and val.lower() not in ("succ", "ok", "idle", "none", "null"):
                 return val
 
-        # 2. Match '######## SOFTWARE : 5.2.9 5th IP           ########'
+        # 3. Match '######## SOFTWARE : 5.2.9 5th IP           ########'
         m2 = re.search(r"SOFTWARE[\s:=]+([0-9]+\.[0-9]+[^\r\n#]*)", clean_line, re.IGNORECASE)
         if m2:
             val = re.sub(r"#+", "", m2.group(1)).strip()
             if val and val.lower() not in ("succ", "ok", "idle", "falcon", "atcu", "none", "null"):
                 return val
 
-        # 3. Match 'FIRMWARE : 5.2.9 5th IP'
+        # 4. Match 'FIRMWARE : 5.2.9 5th IP'
         m3 = re.search(r"\bFIRMWARE[\s:=]+([0-9]+\.[0-9]+[^\r\n#]*)", clean_line, re.IGNORECASE)
         if m3:
             val = re.sub(r"#+", "", m3.group(1)).strip()

@@ -397,6 +397,9 @@ class FotaOrchestrator(QObject):
         self.latest_prncfg_log_line: str = ""
         self.latest_55aa_login_packet: Optional[LoginPacketInfo] = None
         self.latest_api_history_item: dict = {}
+        self._pending_hw_line: Optional[str] = None
+        self.is_line_automation_phase: bool = False
+        self.line_automation_recovering: bool = False
 
     def _extract_api_field(self, item: dict, field_keywords: List[str]) -> str:
         """Search top-level and nested dicts for any field matching keywords."""
@@ -544,6 +547,9 @@ class FotaOrchestrator(QObject):
         self.latest_api_history_item.clear()
         self.target_version = None
         self.is_upgrading = False
+        self._pending_hw_line = None
+        self.is_line_automation_phase = False
+        self.line_automation_recovering = False
 
         self.reset_ui_cards_signal.emit()
         self.progress_signal.emit(0.0)
@@ -579,6 +585,9 @@ class FotaOrchestrator(QObject):
         self.latest_prncfg_log_line = ""
         self.latest_55aa_login_packet = None
         self.latest_api_history_item.clear()
+        self._pending_hw_line = None
+        self.is_line_automation_phase = False
+        self.line_automation_recovering = False
 
     def initialize_system(self) -> bool:
         """Synchronize State Server Matrix & Firmware IDs from REST API on startup."""
@@ -594,6 +603,27 @@ class FotaOrchestrator(QObject):
 
     def process_log_line(self, line: str) -> None:
         """Inspect raw serial log line for CIP2 server domain verification and 10-Stage Pipeline events."""
+        clean_line = MessageParser.strip_ansi(line).strip()
+        if not clean_line:
+            return
+
+        # Line Automation Phase consecutive check ($HW, followed immediately by $FW,)
+        if MessageParser.is_hw_line(clean_line):
+            self._pending_hw_line = clean_line
+            if not self.line_automation_recovering:
+                logger.info("Detected $HW line in log: %s. Watching for immediate consecutive $FW line...", clean_line)
+        elif self._pending_hw_line is not None:
+            if MessageParser.is_fw_line(clean_line):
+                if not self.line_automation_recovering:
+                    logger.info("Detected $FW line (%s) immediately following $HW line (%s). Device is in Line Automation Phase!",
+                                clean_line, self._pending_hw_line)
+                    self._pending_hw_line = None
+                    self._trigger_line_automation_exit_sequence()
+                else:
+                    self._pending_hw_line = None
+            else:
+                self._pending_hw_line = None
+
         # Capture latest 55AA Login Packet
         pkt_55aa = MessageParser.parse_55aa_login_packet(line)
         if pkt_55aa and hasattr(pkt_55aa, "uin") and MessageParser.is_valid_uin(pkt_55aa.uin):
@@ -789,6 +819,72 @@ class FotaOrchestrator(QObject):
             self.prncfg_response_received = False
             self.request_command_signal.emit("*GET#PRNCFG#")
             self.stage_signal.emit(10, "RUNNING", "Fired *GET#PRNCFG#. Validating telemetry & post-upgrade firmware version...")
+
+    def _trigger_line_automation_exit_sequence(self) -> None:
+        """Execute 4-step recovery sequence to bring device from Line Automation Phase back to Normal Logging:
+        1. Fire command: $CONFIG_UIN,<UIN>
+        2. Wait 2s for NVM save, then fire: $REBOOT
+        3. Wait 60 seconds post-reboot
+        4. Fire command: *SET#LOGFLTR#65535#
+        5. Fire command: *GET#PRNCFG# to fetch fresh telemetry
+        """
+        if self.line_automation_recovering:
+            logger.info("Line Automation exit sequence is already in progress. Skipping duplicate trigger.")
+            return
+
+        self.is_line_automation_phase = True
+        self.line_automation_recovering = True
+
+        # Determine UIN (current device UIN, snapshot UIN, or fallback default ACON4NA082300010428)
+        uin = "ACON4NA082300010428"
+        if self.current_device and MessageParser.is_valid_uin(self.current_device.uin):
+            uin = self.current_device.uin
+        elif self.initial_config_snapshot.get("uin") and MessageParser.is_valid_uin(self.initial_config_snapshot["uin"]):
+            uin = self.initial_config_snapshot["uin"]
+
+        msg = f"⚠️ Line Automation Phase Detected ($HW, followed by $FW,). Initiating recovery sequence for UIN {uin}..."
+        logger.info(msg)
+        self.status_signal.emit(msg)
+        self.snackbar_signal.emit(msg)
+
+        # Step 1: Fire $CONFIG_UIN,<UIN>
+        config_cmd = f"$CONFIG_UIN,{uin}"
+        logger.info("Line Automation Recovery Step 1: Firing serial command '%s'", config_cmd)
+        self.request_command_signal.emit(config_cmd)
+
+        # Wait 2000ms for device to save $CONFIG_UIN to NVM flash before sending $REBOOT
+        from PyQt6.QtCore import QTimer
+        logger.info("Line Automation Recovery Step 1: Fired '%s'. Waiting 2s for NVM flash write before $REBOOT...", config_cmd)
+        QTimer.singleShot(2000, self._fire_line_automation_reboot_command)
+
+    def _fire_line_automation_reboot_command(self) -> None:
+        """Step 2: Fire $REBOOT after 2s NVM save delay and schedule 60s post-reboot timer for log filter."""
+        logger.info("Line Automation Recovery Step 2: 2s NVM delay elapsed. Firing serial command '$REBOOT'...")
+        self.request_command_signal.emit("$REBOOT")
+
+        msg_wait = "Line Automation Recovery Step 3: $REBOOT sent. Waiting 60 seconds post-reboot before enabling log filter (*SET#LOGFLTR#65535#)..."
+        logger.info(msg_wait)
+        self.status_signal.emit(msg_wait)
+
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(60000, self._fire_line_automation_logfltr_command)
+
+    def _fire_line_automation_logfltr_command(self) -> None:
+        """Step 4: Fire *SET#LOGFLTR#65535# after 60s delay and auto-fetch fresh *GET#PRNCFG# telemetry."""
+        logger.info("Line Automation Recovery Step 4: 60-second post-reboot delay elapsed. Firing command '*SET#LOGFLTR#65535#'...")
+        self.request_command_signal.emit("*SET#LOGFLTR#65535#")
+
+        msg_complete = "✓ Line Automation Exit Sequence Completed (*SET#LOGFLTR#65535# fired). Normal logging phase active."
+        logger.info(msg_complete)
+        self.status_signal.emit(msg_complete)
+        self.snackbar_signal.emit(msg_complete)
+
+        self.line_automation_recovering = False
+        self.is_line_automation_phase = False
+
+        # Schedule *GET#PRNCFG# in 2 seconds to refresh UI header cards with normal telemetry
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(2000, lambda: self.request_command_signal.emit("*GET#PRNCFG#"))
 
     def _evaluate_stage10_completion(self, current_log_line: str = "") -> None:
         """Validate Stage 10 (Post-Upgrade Telemetry & Firmware Version Match vs Target)."""
