@@ -173,6 +173,29 @@ class FotaApiClient:
             }
         return None
 
+    @staticmethod
+    def _find_server_items(data: Any) -> List[Dict[str, Any]]:
+        """Recursively locate list of server dictionaries within any API response structure."""
+        if isinstance(data, list):
+            return [it for it in data if isinstance(it, dict)]
+        if isinstance(data, dict):
+            for key in ["data", "stateServers", "servers", "rows", "items", "result", "list", "states", "serversList"]:
+                val = data.get(key)
+                if isinstance(val, list) and val and isinstance(val[0], dict):
+                    return [it for it in val if isinstance(it, dict)]
+                if isinstance(val, dict):
+                    res = FotaApiClient._find_server_items(val)
+                    if res:
+                        return res
+            for val in data.values():
+                if isinstance(val, list) and val and isinstance(val[0], dict):
+                    return [it for it in val if isinstance(it, dict)]
+                if isinstance(val, dict):
+                    res = FotaApiClient._find_server_items(val)
+                    if res:
+                        return res
+        return []
+
     def fetch_and_save_servers_matrix(self) -> bool:
         """Fetch state servers list and firmware matrix strictly from environment configured API URLs into input/servers.json."""
         self._ensure_fallback_json()
@@ -186,73 +209,158 @@ class FotaApiClient:
             logger.warning("No FETCH_SERVERS_API_URL configured in .env.")
             return False
 
+        active_token = self.token or self.config.user_id or self.user_id
+        if active_token:
+            self.session.headers.update({
+                "Authorization": f"Bearer {active_token}",
+                "token": str(active_token),
+                "x-access-token": str(active_token),
+                "authtoken": str(active_token),
+            })
+
         parsed_matrix: Dict[str, List[Dict[str, str]]] = {}
+        all_state_items: List[Dict[str, Any]] = []
 
         try:
-            logger.info("Step 1: Fetching state servers list from .env API URL: %s", list_url)
-            res = self.session.get(list_url, timeout=8)
+            logger.info("Step 1: Fetching state servers list from API URL: %s", list_url)
+            
+            fetch_url = list_url
+            if active_token and "token=" not in fetch_url and "accessToken=" not in fetch_url:
+                sep = "&" if "?" in fetch_url else "?"
+                fetch_url = f"{fetch_url}{sep}token={active_token}"
+
+            res = self.session.get(fetch_url, timeout=8)
+            
+            # If initial request returns HTTP error, retry with size=1000
+            if res.status_code != 200:
+                logger.warning("Initial GET %s returned HTTP status %d. Message: %s", fetch_url, res.status_code, res.text[:120])
+                import re
+                alt_url = fetch_url
+                if "size=" in alt_url:
+                    alt_url = re.sub(r"size=\d+", "size=1000", alt_url)
+                else:
+                    sep = "&" if "?" in alt_url else "?"
+                    alt_url = f"{alt_url}{sep}size=1000"
+                
+                alt_res = self.session.get(alt_url, timeout=8)
+                if alt_res.status_code == 200:
+                    res = alt_res
+                    fetch_url = alt_url
+
             if res.status_code == 200:
                 res_json = res.json()
-                data_field = res_json.get("data", {})
-                
-                if isinstance(data_field, dict):
-                    state_list = data_field.get("data", []) or data_field.get("stateServers", []) or []
-                elif isinstance(data_field, list):
-                    state_list = data_field
-                else:
-                    state_list = []
+                page_items = self._find_server_items(res_json)
+                all_state_items.extend(page_items)
 
-                logger.info("Retrieved %d state servers from API. Step 2: Fetching firmwares per server...", len(state_list))
-
-                for item in state_list:
-                    if not isinstance(item, dict):
-                        continue
-                    
-                    state_id = item.get("_id") or item.get("id")
-                    state_name = item.get("state") or item.get("stateName") or item.get("stateServerName")
-
-                    if not state_name or not state_id:
-                        continue
-
-                    firmwares_for_state: List[Dict[str, str]] = []
-
-                    # Step 2: Query per-server detail endpoint configured in .env
-                    if by_id_template:
-                        detail_url = by_id_template.format(id=state_id)
+                # Check if multi-page fetching is needed
+                if "page=" in fetch_url and len(page_items) >= 10:
+                    import re
+                    page = 2
+                    while page <= 25:
+                        p_url = re.sub(r"page=\d+", f"page={page}", fetch_url)
                         try:
-                            d_res = self.session.get(detail_url, timeout=5)
-                            if d_res.status_code == 200:
-                                d_json = d_res.json()
-                                d_data = d_json.get("data", [])
-                                
-                                if isinstance(d_data, list) and d_data:
-                                    server_obj = d_data[0]
-                                elif isinstance(d_data, dict):
-                                    server_obj = d_data
-                                else:
-                                    server_obj = {}
+                            p_res = self.session.get(p_url, timeout=6)
+                            if p_res.status_code != 200:
+                                break
+                            p_items = self._find_server_items(p_res.json())
+                            if not p_items:
+                                break
+                            all_state_items.extend(p_items)
+                            if len(p_items) < 10:
+                                break
+                            page += 1
+                        except Exception:
+                            break
+            else:
+                logger.error("State servers API request failed with HTTP %d for %s", res.status_code, fetch_url)
 
-                                fw_list = server_obj.get("firmwareIds", []) or server_obj.get("firmwares", [])
-                                if isinstance(fw_list, list):
-                                    for fw in fw_list:
-                                        if isinstance(fw, dict):
-                                            fw_dict = self._extract_firmware_dict(fw)
-                                            if fw_dict and fw_dict not in firmwares_for_state:
-                                                firmwares_for_state.append(fw_dict)
-                        except Exception as err:
-                            logger.debug("Error fetching server details for %s (_id: %s): %s", state_name, state_id, err)
+            logger.info("Retrieved %d state server items from API. Processing metadata...", len(all_state_items))
 
-                    ip1 = item.get("govtIp1") or item.get("ip1") or item.get("primaryIp") or item.get("ip") or ""
-                    port1 = item.get("port1") if item.get("port1") is not None else item.get("primaryPort")
-                    ip2 = item.get("govtIp2") or item.get("ip2") or item.get("secondaryIp") or ""
-                    port2 = item.get("port2") if item.get("port2") is not None else item.get("secondaryPort")
-                    ip3 = item.get("govtIp3") or item.get("ip3") or item.get("tertiaryIp") or ""
-                    port3 = item.get("port3") if item.get("port3") is not None else item.get("tertiaryPort")
-                    ip4 = item.get("govtIp4") or item.get("ip4") or item.get("quaternaryIp") or ""
-                    port4 = item.get("port4") if item.get("port4") is not None else item.get("quaternaryPort")
-                    state_enable = item.get("stateEnable") or item.get("state_enabled_ota") or item.get("stateEnabledOta") or ""
-                    state_abbr = item.get("stateAbbreviation") or item.get("state_abbreviation") or item.get("stateAbbr") or item.get("state_abbr") or ""
+            for item in all_state_items:
+                state_name = (
+                    item.get("state")
+                    or item.get("stateName")
+                    or item.get("stateServerName")
+                    or item.get("state_name")
+                    or item.get("name")
+                    or item.get("serverName")
+                    or item.get("server")
+                )
 
+                if not state_name or not isinstance(state_name, str):
+                    continue
+
+                state_name = state_name.strip()
+                state_id = (
+                    item.get("_id")
+                    or item.get("id")
+                    or item.get("stateId")
+                    or item.get("serverId")
+                    or item.get("uid")
+                )
+
+                firmwares_for_state: List[Dict[str, str]] = []
+
+                # Extract firmwares embedded directly in main item list
+                embedded_fws = (
+                    item.get("firmwareIds")
+                    or item.get("firmwares")
+                    or item.get("firmware")
+                    or item.get("firmware_list")
+                )
+                if isinstance(embedded_fws, list):
+                    for fw in embedded_fws:
+                        if isinstance(fw, dict):
+                            fw_dict = self._extract_firmware_dict(fw)
+                            if fw_dict and fw_dict not in firmwares_for_state:
+                                firmwares_for_state.append(fw_dict)
+
+                # Step 2: Query per-server detail endpoint if state_id is available
+                if by_id_template and state_id:
+                    detail_url = by_id_template.format(id=state_id)
+                    if active_token and "token=" not in detail_url:
+                        sep = "&" if "?" in detail_url else "?"
+                        detail_url = f"{detail_url}{sep}token={active_token}"
+                    try:
+                        d_res = self.session.get(detail_url, timeout=5)
+                        if d_res.status_code == 200:
+                            d_json = d_res.json()
+                            d_items = self._find_server_items(d_json)
+                            server_obj = d_items[0] if d_items else (d_json.get("data", {}) if isinstance(d_json.get("data"), dict) else {})
+
+                            fw_list = (
+                                server_obj.get("firmwareIds", [])
+                                or server_obj.get("firmwares", [])
+                                or server_obj.get("firmware", [])
+                            )
+                            if isinstance(fw_list, list):
+                                for fw in fw_list:
+                                    if isinstance(fw, dict):
+                                        fw_dict = self._extract_firmware_dict(fw)
+                                        if fw_dict and fw_dict not in firmwares_for_state:
+                                            firmwares_for_state.append(fw_dict)
+                    except Exception as err:
+                        logger.debug("Error fetching server details for %s (_id: %s): %s", state_name, state_id, err)
+
+                # If no firmwares returned from API, seed with fallback firmwares if available
+                if not firmwares_for_state:
+                    if state_name in self.DEFAULT_SERVERS_MATRIX["states"]:
+                        firmwares_for_state = list(self.DEFAULT_SERVERS_MATRIX["states"][state_name])
+                    elif "Default" in self.DEFAULT_SERVERS_MATRIX["states"]:
+                        firmwares_for_state = list(self.DEFAULT_SERVERS_MATRIX["states"]["Default"])
+
+                ip1 = item.get("govtIp1") or item.get("ip1") or item.get("primaryIp") or item.get("ip") or ""
+                port1 = item.get("port1") if item.get("port1") is not None else item.get("primaryPort")
+                ip2 = item.get("govtIp2") or item.get("ip2") or item.get("secondaryIp") or ""
+                port2 = item.get("port2") if item.get("port2") is not None else item.get("secondaryPort")
+                ip3 = item.get("govtIp3") or item.get("ip3") or item.get("tertiaryIp") or ""
+                port3 = item.get("port3") if item.get("port3") is not None else item.get("tertiaryPort")
+                ip4 = item.get("govtIp4") or item.get("ip4") or item.get("quaternaryIp") or ""
+                port4 = item.get("port4") if item.get("port4") is not None else item.get("quaternaryPort")
+                state_enable = item.get("stateEnable") or item.get("state_enabled_ota") or item.get("stateEnabledOta") or ""
+                state_abbr = item.get("stateAbbreviation") or item.get("state_abbreviation") or item.get("stateAbbr") or item.get("state_abbr") or ""
+
+                if state_name not in parsed_matrix:
                     parsed_matrix[state_name] = {
                         "stateAbbreviation": str(state_abbr),
                         "govtIp1": str(ip1),
@@ -266,12 +374,19 @@ class FotaApiClient:
                         "stateEnable": str(state_enable),
                         "firmwares": firmwares_for_state
                     }
+                else:
+                    # Merge firmwares if state was encountered again
+                    existing_fws = parsed_matrix[state_name].get("firmwares", [])
+                    for fw in firmwares_for_state:
+                        if fw not in existing_fws:
+                            existing_fws.append(fw)
+                    parsed_matrix[state_name]["firmwares"] = existing_fws
 
-                if parsed_matrix:
-                    logger.info("Successfully fetched firmwares & server IP metadata for %d state servers from API.", len(parsed_matrix))
-                    print(f"Synced {len(parsed_matrix)} State Servers & Firmwares from .env API into servers.json")
+            if parsed_matrix:
+                logger.info("Successfully fetched firmwares & server IP metadata for %d state servers from API.", len(parsed_matrix))
+                print(f"Synced {len(parsed_matrix)} State Servers & Firmwares from .env API into servers.json")
         except Exception as err:
-            logger.warning("Failed to fetch state matrix from .env API endpoint %s: %s", list_url, err)
+            logger.error("Failed to fetch state servers matrix from API: %s", err)
 
         if "DO NOT DELETE" not in parsed_matrix or not parsed_matrix["DO NOT DELETE"]:
             parsed_matrix["DO NOT DELETE"] = self.DEFAULT_SERVERS_MATRIX["states"]["DO NOT DELETE"]
