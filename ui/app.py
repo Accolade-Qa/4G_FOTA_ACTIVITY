@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
-from PyQt6.QtGui import QFont, QKeySequence, QShortcut, QTextCursor
+from PyQt6.QtGui import QFont, QIcon, QKeySequence, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -68,6 +68,14 @@ class MinimalFotaWindow(QMainWindow):
         self.resize(1020, 650)
         self.is_dark_theme = False
         self.setStyleSheet(LIGHT_THEME_QSS)
+
+        # Set Window Favicon & Taskbar Icon
+        base_dir = get_base_dir()
+        icon_path = base_dir / "assets" / "logo.ico"
+        if not icon_path.exists():
+            icon_path = base_dir / "assets" / "logo.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         self.config = Config(get_base_dir())
         self.session_logger = SessionLogger(self.config.logs_dir)
@@ -762,8 +770,24 @@ class MinimalFotaWindow(QMainWindow):
 
 
 def main() -> None:
+    # Set explicit AppUserModelID on Windows so taskbar uses custom app icon instead of default Python icon
+    import ctypes
+    try:
+        myappid = "AccoladeElectronics.ContinuousFotaUtility.2.0"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 9))
+
+    base_dir = get_base_dir()
+    icon_path = base_dir / "assets" / "logo.ico"
+    if not icon_path.exists():
+        icon_path = base_dir / "assets" / "logo.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     win = MinimalFotaWindow()
     win.show()
     sys.exit(app.exec())

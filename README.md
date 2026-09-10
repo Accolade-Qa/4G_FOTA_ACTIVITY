@@ -43,11 +43,14 @@ A multi-threaded Windows Desktop Utility for continuous FOTA (Firmware Over-The-
 python main.py
 ```
 
-### 3. Build Standalone Executable (`Continuos_Fota.exe`)
 ```powershell
-pyinstaller --noconfirm --noconsole --onefile --icon="assets/logo.ico" --name "Continuos_Fota" --add-data ".env;." --add-data "input;input" --add-data "assets;assets" --hidden-import PyQt6 --hidden-import serial --hidden-import serial.tools.list_ports --hidden-import requests --hidden-import urllib3 --hidden-import dotenv main.py
+# Recommended: Build using pre-configured spec file (embeds assets/logo.ico icon)
+pyinstaller --noconfirm fota_utility.spec
+
+# Alternative single-command build:
+pyinstaller --noconfirm --noconsole --onefile --icon="assets/logo.ico" --name "Continuous_FOTA" --add-data ".env;." --add-data "input;input" --add-data "assets;assets" --hidden-import PyQt6 --hidden-import serial --hidden-import serial.tools.list_ports --hidden-import requests --hidden-import urllib3 --hidden-import dotenv main.py
 ```
-Generated binary located at `dist/Continuos_Fota.exe`.
+Generated binary located at `dist/Continuous_FOTA.exe`.
 
 ---
 

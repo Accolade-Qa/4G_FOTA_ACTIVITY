@@ -16,6 +16,14 @@ from backend.path_resolver import get_base_dir
 # Get the correct base directory (handles both exe and source execution)
 BASE_DIR = get_base_dir()
 
+# Set explicit AppUserModelID on Windows so taskbar uses custom app icon instead of default Python icon
+import ctypes
+try:
+    myappid = "AccoladeElectronics.ContinuousFotaUtility.2.0"
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+except Exception:
+    pass
+
 # Suppress legacy Windows DirectWrite bitmap font loading warnings (8514oem/Fixedsys)
 os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts.warning=false;qt.qpa.fonts.debug=false"
 
