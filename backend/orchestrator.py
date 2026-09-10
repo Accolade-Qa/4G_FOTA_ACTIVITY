@@ -402,6 +402,7 @@ class FotaOrchestrator(QObject):
         self._pending_hw_line: Optional[str] = None
         self.is_line_automation_phase: bool = False
         self.line_automation_recovering: bool = False
+        self.last_attempt_count: Optional[int] = None
 
     def _extract_api_field(self, item: dict, field_keywords: List[str]) -> str:
         """Search top-level and nested dicts for any field matching keywords."""
@@ -460,7 +461,12 @@ class FotaOrchestrator(QObject):
         return False, f"Waiting for API server header statuses to be SET/SKIPPED: {', '.join(missing)}"
 
     def _evaluate_api_skipped_stages(self) -> None:
-        """Check if API response has Primary/Secondary/Tertiary/Quaternary IP Status marked as 'Skipped' / 'Set' and pass stages directly."""
+        """Check if API response has Primary/Secondary/Tertiary/Quaternary IP Status marked as 'Skipped' / 'Set' and pass stages directly.
+        CRITICAL HIERARCHY RULE: Stages 6-10 CANNOT be evaluated or passed until Stage 5 (100% Downloaded) has PASSED (self.download_100_reached is True).
+        """
+        if not self.download_100_reached:
+            return
+
         if not isinstance(self.latest_api_history_item, dict) or not self.latest_api_history_item:
             return
 
@@ -535,9 +541,28 @@ class FotaOrchestrator(QObject):
                     self.stage_signal.emit(9, "RUNNING", f"Waiting for Server IPs (IP2/IP3/IP4) Statuses to be Set/Skipped in API...")
                     return
 
-            # Stage 10 continuous evaluation
-            if self.ip1_verified and self.ip2_verified and self.ip3_verified and self.ip4_verified and not self.config_verified:
-                self._evaluate_stage10_completion()
+    def reset_post_download_stages(self, reason: str = "") -> None:
+        """Reset FOTA download state and post-download stages (S5-S10) back to WAITING when download restarts or attempt count increases."""
+        logger.info("Resetting FOTA download state & stages S5-S10 to WAITING. Reason: %s", reason or "Download restart/re-attempt")
+        self.download_100_reached = False
+        self.reboot_detected = False
+        self.state_ota_verified = False
+        self.ip1_verified = False
+        self.ip2_verified = False
+        self.ip3_verified = False
+        self.ip4_verified = False
+        self.config_verified = False
+        self.prncfg_command_fired = False
+        self.prncfg_response_received = False
+
+        # Reset Stage 5 (100% Downloaded) to WAITING
+        self.stage_states[5] = "WAITING"
+        self.stage_signal.emit(5, "WAITING", "Waiting for FOTA download 100% completion...")
+
+        # Reset Stages 6-10 to WAITING
+        for s in range(6, 11):
+            self.stage_states[s] = "WAITING"
+            self.stage_signal.emit(s, "WAITING", "Waiting for post-download verification...")
 
     def prepare_next_fota_cycle(self) -> None:
         """Reset stage cards and progress bar, then trigger the next sequential FOTA version."""
@@ -651,11 +676,13 @@ class FotaOrchestrator(QObject):
 
         # Pre-Start verification: check for STATUS#CLR#FOTA#OK#{IMEI}
         is_clr, clr_imei = MessageParser.parse_clr_fota_ok(line)
-        if is_clr and not self.clr_fota_ok_received:
-            self.clr_fota_ok_received = True
-            msg = f"✓ STATUS#CLR#FOTA#OK verified from log for IMEI {clr_imei or ''}"
+        if is_clr:
+            msg = f"✓ STATUS#CLR#FOTA#OK verified from log for IMEI {clr_imei or ''}. Download attempt initiated."
             logger.info(msg)
             self.status_signal.emit(msg)
+            self.clr_fota_ok_received = True
+            if self.download_100_reached or any(self.stage_states.get(s) == "PASSED" for s in range(5, 11)):
+                self.reset_post_download_stages("STATUS#CLR#FOTA#OK detected in serial log")
 
         # 55AA Server FOTA Header (|55AA,1,2,epoch,version,flag,0,0,filesize,0,chunksize,FF|)
         fota_hdr = MessageParser.parse_55aa_server_fota_header(line)
@@ -1276,13 +1303,24 @@ class FotaOrchestrator(QObject):
         if isinstance(item, dict) and item:
             self.latest_api_history_item = item
 
-        # Evaluate if API response has Primary IP Status or Secondary IP Status marked as 'Skipped'
-        self._evaluate_api_skipped_stages()
-
         progress = float(item.get("progress") or 0.0)
         status_str = item.get("deviceFotaStatus") or "In-Progress"
         ping_cnt = item.get("pingCount", 0) or 0
         attempt_cnt = item.get("attemptCount", 0) or 0
+
+        # Check if attemptCount increased or if progress restarted (< 100% while S5 was previously PASSED)
+        if self.last_attempt_count is not None and attempt_cnt > self.last_attempt_count:
+            logger.info("FOTA attempt count increased from %d to %d for IMEI %s. Resetting stages S5-S10.",
+                        self.last_attempt_count, attempt_cnt, self.current_device.imei if self.current_device else "")
+            self.reset_post_download_stages(f"FOTA attempt count increased from {self.last_attempt_count} to {attempt_cnt}")
+        elif progress < 100.0 and (self.download_100_reached or any(self.stage_states.get(s) == "PASSED" for s in range(5, 11))):
+            logger.info("Progress %.2f%% < 100%% while post-download stages were PASSED. Resetting stages S5-S10.", progress)
+            self.reset_post_download_stages(f"FOTA progress restarted ({progress:.2f}%)")
+
+        self.last_attempt_count = attempt_cnt
+
+        # Evaluate if API response has Primary IP Status or Secondary IP Status marked as 'Skipped'
+        self._evaluate_api_skipped_stages()
 
         self.progress_signal.emit(progress)
         status_msg = f"FOTA Status: {status_str} | Progress: {progress:.2f}% | Pings: {ping_cnt} | Attempts: {attempt_cnt}/3"
@@ -1325,6 +1363,11 @@ class FotaOrchestrator(QObject):
     def update_progress(self, progress: float) -> None:
         """Update live download progress percentage and continuously validate till 100% done."""
         val_clean = max(0.0, min(100.0, float(progress)))
+
+        # If live progress is under 100% while S5-S10 were previously PASSED (e.g. download re-attempted), reset S5-S10!
+        if val_clean < 100.0 and (self.download_100_reached or any(self.stage_states.get(s) == "PASSED" for s in range(5, 11))):
+            self.reset_post_download_stages(f"Live download progress ({val_clean:.2f}%) < 100%")
+
         self.progress_signal.emit(val_clean)
 
         # Stage 3: Progress Sync Passed
