@@ -71,9 +71,9 @@ class MinimalFotaWindow(QMainWindow):
 
         # Set Window Favicon & Taskbar Icon
         base_dir = get_base_dir()
-        icon_path = base_dir / "assets" / "logo.ico"
+        icon_path = base_dir / "assets" / "icon.png"
         if not icon_path.exists():
-            icon_path = base_dir / "assets" / "logo.png"
+            icon_path = base_dir / "assets" / "logo.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -784,7 +784,7 @@ def main() -> None:
     base_dir = get_base_dir()
     icon_path = base_dir / "assets" / "logo.ico"
     if not icon_path.exists():
-        icon_path = base_dir / "assets" / "logo.png"
+        icon_path = base_dir / "assets" / "icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
