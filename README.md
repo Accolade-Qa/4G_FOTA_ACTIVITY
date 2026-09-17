@@ -48,7 +48,7 @@ python main.py
 pyinstaller --noconfirm fota_utility.spec
 
 # Alternative single-command build:
-pyinstaller --noconfirm --noconsole --onefile --icon="assets/logo.ico" --name "Continuous_FOTA" --add-data ".env;." --add-data "input;input" --add-data "assets;assets" --hidden-import PyQt6 --hidden-import serial --hidden-import serial.tools.list_ports --hidden-import requests --hidden-import urllib3 --hidden-import dotenv main.py
+pyinstaller --noconfirm --noconsole --onefile --icon="assets/logo.ico" --name "FOTA" --add-data ".env;." --add-data "input;input" --add-data "assets;assets" --hidden-import PyQt6 --hidden-import serial --hidden-import serial.tools.list_ports --hidden-import requests --hidden-import urllib3 --hidden-import dotenv main.py
 ```
 Generated binary located at `dist/Continuous_FOTA.exe`.
 

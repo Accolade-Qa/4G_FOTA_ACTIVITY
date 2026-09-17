@@ -210,13 +210,22 @@ The utility uses two configuration files located in your application folder: `.e
 Located in the main application root folder. Ensure the following parameters are configured:
 
 ```ini
-# Server API Connection Settings
-API_BASE_URL=https://api.accolade-telematics.com
-API_USER=your_qa_username
-API_PASS=your_qa_password
+# Portal Credentials & Auth
+PORTAL_LOGIN_URL=https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/user/login
+PORTAL_USER=suraj.bhalerao@accoladeelectronics.com
+PORTAL_PASS=your_password
+USER_ID=677cd2181b05f196abd64907
 
-# Serial Communication Default Baud Rate
+# Serial Communication & Default State
+SERIAL_PORT=COM5
 SERIAL_BAUD=115200
+DEFAULT_STATE=Continues Fota
+
+# Accolade FOTA REST API Endpoints
+FETCH_SERVERS_API_URL=https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/server/getServerData?page=1&size=50&search=
+FETCH_SERVER_DATA_BY_ID=https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/server/getServerDataByUId?id={id}
+FETCH_FOTA_HISTORY_URL=https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/fota/getFOTADevicesHistory?imei={imei}
+FOTA_TRIGGER_API_URL=https://aepl-tcu4g-qa.accoladeelectronics.com:6101/api/fota/createManualFota
 ```
 
 ### 3.2 `input/servers.json` File (State Server Matrix)
@@ -238,7 +247,7 @@ Located in the `input/` folder. This file contains server IP addresses, state ab
 ```
 
 <div class="box-info">
-  <b>Automatic Matrix Sync:</b> The utility automatically syncs <code>input/servers.json</code> with the live server API whenever the application launches. You can also edit <code>servers.json</code> manually if working offline.
+  <b>Automatic Matrix Sync & PyInstaller Fallback:</b> The utility automatically syncs <code>input/servers.json</code> with the live server API whenever the application launches. When running as a standalone executable (<code>Continuos_Fota.exe</code>), if <code>input/servers.json</code> is missing or empty, the utility automatically extracts the bundled fallback matrix from PyInstaller resources on startup.
 </div>
 
 ---
@@ -315,13 +324,18 @@ The **10-Stage Progression Widget (`StageProgressionWidget`)** displays 10 visua
 | **S10**| `S10: Config Verified` | Verifies post-upgrade version from `55AA` Login Packet matches target version. | <span class="badge-pass">PASSED</span>: Version verified.<br><span class="badge-fail">FAILED</span>: Version mismatch. |
 
 <div class="box-info">
-  <b>UNDERSTANDING STAGE BADGES:</b>
+  <b>UNDERSTANDING STAGE BADGES & ENFORCEMENT RULES:</b>
   <ul>
     <li><b class="badge-pass">PASSED:</b> Stage completed successfully.</li>
     <li><b class="badge-info">ALREADY SET:</b> Device is already configured with target state/IP; stage passed automatically.</li>
     <li><b class="badge-warn">NOT PRESENT:</b> Parameter absent in <code>servers.json</code> matrix; stage skipped safely.</li>
     <li><b class="badge-fail">FAILED:</b> Stage validation failed (check Troubleshooting guide).</li>
   </ul>
+  <b>CRITICAL VALIDATION & RESET LAWS:</b>
+  <ol>
+    <li><b>Strict Download Barrier:</b> Stages <code>S6</code> through <code>S10</code> will <b>NEVER</b> execute or mark as passed until Stage <code>S5</code> (100% Downloaded) reaches exactly 100.0%.</li>
+    <li><b>Re-download & Pre-abort Reset Rule:</b> If the device's FOTA attempt count increases on the server, or a pre-abort handshake (<code>STATUS#CLR#FOTA#OK</code> / <code>$CLR,FOTA,OK</code>) is received, or live download progress restarts below 100%, Stages <code>S5</code> through <code>S10</code> automatically reset to <code>[⏱ WAITING]</code>.</li>
+  </ol>
 </div>
 
 ---
