@@ -315,8 +315,10 @@ class FotaApiPollerWorker(QThread):
                         break
 
                     # 2. Check if Attempt Count Exceeded
-                    if attempt_count >= 3:
-                        msg = f"⛔ FOTA Aborted automatically on server: Attempt count reached limit ({attempt_count}/3). Pings: {ping_count}."
+                    # Valid FOTA is only considered successful when attempts are exactly 3.
+                    # If it goes above 3, mark it invalid and fail immediately.
+                    if attempt_count >= 4:
+                        msg = f"⛔ FOTA invalid: attempt count exceeded the allowed limit (3 complete attempts max). Current attempts: {attempt_count}. Pings: {ping_count}."
                         logger.warning(msg)
                         self.poll_finished_signal.emit("ATTEMPTS_EXCEEDED", msg)
                         break
