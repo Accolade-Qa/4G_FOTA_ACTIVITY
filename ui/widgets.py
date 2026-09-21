@@ -419,7 +419,7 @@ class ReportingAnalyticsTabWidget(QWidget):
 
         # Header controls inside tab
         ctrl_bar = QHBoxLayout()
-        title = QLabel("📈 FOTA System Executive Analytics & Distribution Report")
+        title = QLabel("FOTA System Executive Analytics & Distribution Report")
         title.setStyleSheet("font-weight: 700; font-size: 10pt;")
 
         btn_export = QPushButton("Export CSV")
@@ -444,7 +444,7 @@ class ReportingAnalyticsTabWidget(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Table 1: State Server Execution Summary
-        grp_state = QGroupBox("📍 State Server Execution Matrix Distribution")
+        grp_state = QGroupBox("State Server Execution Matrix Distribution")
         layout_s = QVBoxLayout(grp_state)
         self.table_states = QTableWidget()
         self.table_states.setColumnCount(4)
@@ -454,7 +454,7 @@ class ReportingAnalyticsTabWidget(QWidget):
         splitter.addWidget(grp_state)
 
         # Table 2: Version Progression Summary
-        grp_ver = QGroupBox("⚙️ Firmware Version Progression Breakdown")
+        grp_ver = QGroupBox("Firmware Version Progression Breakdown")
         layout_v = QVBoxLayout(grp_ver)
         self.table_versions = QTableWidget()
         self.table_versions.setColumnCount(4)

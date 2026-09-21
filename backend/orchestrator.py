@@ -179,7 +179,7 @@ class FotaAsyncTriggerWorker(QThread):
                     mismatches.append(f"ICCID (Log: '{self.login_info.iccid}' != API: '{api_iccid}')")
 
                 if mismatches:
-                    mismatch_msg = f"⚠️ Telemetry Mismatch: {', '.join(mismatches)}"
+                    mismatch_msg = f"Telemetry Mismatch: {', '.join(mismatches)}"
                     logger.warning("TELEMETRY MISMATCH DETECTED for IMEI %s: %s", self.login_info.imei, mismatch_msg)
                     self.orchestrator.snackbar_signal.emit(mismatch_msg)
 
@@ -193,7 +193,7 @@ class FotaAsyncTriggerWorker(QThread):
                 is_pending_active = is_active_fota_session(first_item) or (status_lower in ("pending", "in-progress"))
 
                 display_status = "Completed" if is_completed else ("Aborted" if is_aborted else "Pending")
-                msg = (f"📋 Scanned FOTA History for IMEI {self.login_info.imei}: "
+                msg = (f"Scanned FOTA History for IMEI {self.login_info.imei}: "
                        f"Status: '{raw_status or display_status}', Target: '{target_ver}', Progress: {progress:.2f}%, Pings: {ping_cnt}, Attempts: {attempt_cnt}/3.")
                 logger.info(msg)
 
@@ -232,8 +232,8 @@ class FotaAsyncTriggerWorker(QThread):
 
             if not next_ver:
                 if not self.orchestrator.resolver.validate_version_exists(self.device_state, self.login_info.version):
-                    msg = f"⚠️ Version Validation Barrier: Firmware version '{self.login_info.version}' is NOT listed in servers.json for state '{self.device_state}'. FOTA process blocked."
-                    toast_msg = f"⚠️ Version Warning: Device version '{self.login_info.version}' not found in '{self.device_state}' server matrix!"
+                    msg = f"Version Validation Barrier: Firmware version '{self.login_info.version}' is NOT listed in servers.json for state '{self.device_state}'. FOTA process blocked."
+                    toast_msg = f"Version Warning: Device version '{self.login_info.version}' not found in '{self.device_state}' server matrix!"
                     logger.warning(toast_msg)
                     self.orchestrator.snackbar_signal.emit(toast_msg)
                 else:
@@ -309,7 +309,7 @@ class FotaApiPollerWorker(QThread):
 
                     # 1. Check if Aborted
                     if is_aborted or abort_reason:
-                        msg = f"⛔ FOTA Aborted on server. Reason: '{abort_reason}'. Pings: {ping_count}, Attempts: {attempt_count}/3."
+                        msg = f"FOTA Aborted on server. Reason: '{abort_reason}'. Pings: {ping_count}, Attempts: {attempt_count}/3."
                         logger.warning(msg)
                         self.poll_finished_signal.emit("ABORTED", msg)
                         break
@@ -318,7 +318,7 @@ class FotaApiPollerWorker(QThread):
                     # Valid FOTA is only considered successful when attempts are exactly 3.
                     # If it goes above 3, mark it invalid and fail immediately.
                     if attempt_count >= 4:
-                        msg = f"⛔ FOTA invalid: attempt count exceeded the allowed limit (3 complete attempts max). Current attempts: {attempt_count}. Pings: {ping_count}."
+                        msg = f"FOTA invalid: attempt count exceeded the allowed limit (3 complete attempts max). Current attempts: {attempt_count}. Pings: {ping_count}."
                         logger.warning(msg)
                         self.poll_finished_signal.emit("ATTEMPTS_EXCEEDED", msg)
                         break
@@ -327,7 +327,7 @@ class FotaApiPollerWorker(QThread):
                     if is_completed or progress >= 100.0:
                         if not completed_emitted:
                             completed_emitted = True
-                            msg = f"🎉 FOTA completed successfully (100%). Pings: {ping_count}, Attempts: {attempt_count}/3."
+                            msg = f"FOTA completed successfully (100%). Pings: {ping_count}, Attempts: {attempt_count}/3."
                             logger.info(msg)
                             self.poll_finished_signal.emit("COMPLETED", msg)
 
@@ -900,7 +900,7 @@ class FotaOrchestrator(QObject):
         elif self.initial_config_snapshot.get("uin") and MessageParser.is_valid_uin(self.initial_config_snapshot["uin"]):
             uin = self.initial_config_snapshot["uin"]
 
-        msg = f"⚠️ Line Automation Phase Detected ($HW, followed by $FW,). Initiating recovery sequence for UIN {uin}..."
+        msg = f"Line Automation Phase Detected ($HW, followed by $FW,). Initiating recovery sequence for UIN {uin}..."
         logger.info(msg)
         self.status_signal.emit(msg)
         self.snackbar_signal.emit(msg)
@@ -1019,7 +1019,7 @@ class FotaOrchestrator(QObject):
             self.stage_states[10] = "PASSED"
             self.stage_signal.emit(10, "PASSED", f"Post-upgrade 55AA Login Packet & PRNCFG log verified target '{ver_label}'")
             
-            msg = f"🎉 ALL 10 FOTA STAGES 100% COMPLETED & VERIFIED FOR {cur_dev.uin} (Target Version: {ver_label})!"
+            msg = f"ALL 10 FOTA STAGES 100% COMPLETED & VERIFIED FOR {cur_dev.uin} (Target Version: {ver_label})!"
             logger.info(msg)
 
             # 1. Write final COMPLETED audit log entry
@@ -1131,7 +1131,7 @@ class FotaOrchestrator(QObject):
         else:
             self.stage_states[2] = "FAILED"
             self.stage_signal.emit(2, "FAILED", f"Version '{login_info.version}' not listed in '{device_state}' matrix")
-            warning_msg = f"⚠️ Version Warning: Device version '{login_info.version}' not found in '{device_state}' server matrix!"
+            warning_msg = f"Version Warning: Device version '{login_info.version}' not found in '{device_state}' server matrix!"
             logger.warning(warning_msg)
             self.snackbar_signal.emit(warning_msg)
 
@@ -1352,7 +1352,7 @@ class FotaOrchestrator(QObject):
 
                 # 3. Re-initiate FOTA API trigger request for device
                 logger.info("FOTA aborted for UIN %s. Re-initiating FOTA API trigger request...", self.current_device.uin)
-                self.status_signal.emit(f"⛔ FOTA Aborted. Audit report saved. Re-initiating FOTA API request for {self.current_device.uin}...")
+                self.status_signal.emit(f" FOTA Aborted. Audit report saved. Re-initiating FOTA API request for {self.current_device.uin}...")
 
                 dev = self.current_device
                 state = dev.state
