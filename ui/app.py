@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from backend.path_resolver import get_base_dir
+from backend.path_resolver import get_base_dir, get_asset_path
 from backend.config import Config
 from backend.models import LoginPacketInfo
 from backend.orchestrator import FotaOrchestrator
@@ -70,10 +70,9 @@ class MinimalFotaWindow(QMainWindow):
         self.setStyleSheet(LIGHT_THEME_QSS)
 
         # Set Window Favicon & Taskbar Icon
-        base_dir = get_base_dir()
-        icon_path = base_dir / "assets" / "icon.png"
+        icon_path = get_asset_path("assets/logo.ico")
         if not icon_path.exists():
-            icon_path = base_dir / "assets" / "logo.ico"
+            icon_path = get_asset_path("assets/icon.png")
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -781,10 +780,9 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 9))
 
-    base_dir = get_base_dir()
-    icon_path = base_dir / "assets" / "logo.ico"
+    icon_path = get_asset_path("assets/logo.ico")
     if not icon_path.exists():
-        icon_path = base_dir / "assets" / "icon.png"
+        icon_path = get_asset_path("assets/icon.png")
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
