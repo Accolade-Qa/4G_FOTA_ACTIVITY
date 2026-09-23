@@ -37,14 +37,14 @@ logs/
 *.log
 
 # Keep the bundled state matrix available to PyInstaller builds
-/input/*
-!/input/servers.json
-!/input/.gitkeep
+input/*
+input/servers.json
+input/.gitkeep
 
 # === OS Generated Files ===
 .DS_Store
 
 # === Miscellaneous ===
-/output
-/results
-/logs
+output
+results
+logs
