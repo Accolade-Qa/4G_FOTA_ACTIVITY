@@ -456,11 +456,11 @@
       "port1": "",
       "govtIp2": "",
       "port2": "",
-      "govtIp3": "",
+      "govtIp3": "data.vahanshakti.in",
       "port3": "",
       "govtIp4": "",
       "port4": "",
-      "stateEnable": "",
+      "stateEnable": "*SET#SWEMP#MH#",
       "firmwares": [
         {
           "version": "5.2.27",
@@ -643,6 +643,38 @@
           "expectedFirmwareVersion": "",
           "fileName": "ATCU_5.2.4_master.bin",
           "description": ""
+        }
+      ]
+    },
+    "FASDFS": {
+      "stateAbbreviation": "D",
+      "govtIp1": "FASDF",
+      "port1": "",
+      "govtIp2": "",
+      "port2": "",
+      "govtIp3": "",
+      "port3": "",
+      "govtIp4": "",
+      "port4": "",
+      "stateEnable": "D",
+      "firmwares": [
+        {
+          "version": "1.0.0",
+          "expectedFirmwareVersion": "1.0.1",
+          "fileName": "TCP01.bin",
+          "description": "Default base firmware"
+        },
+        {
+          "version": "1.0.1",
+          "expectedFirmwareVersion": "1.0.2",
+          "fileName": "TCP01_v101.bin",
+          "description": "Default patch update"
+        },
+        {
+          "version": "1.0.2",
+          "expectedFirmwareVersion": "1.0.3",
+          "fileName": "TCP01_v102.bin",
+          "description": "Default release 1.0.2"
         }
       ]
     },
@@ -1128,10 +1160,10 @@
       "port1": "4030",
       "govtIp2": "data.vahanshakti.in",
       "port2": "4040",
-      "govtIp3": "",
-      "port3": "",
-      "govtIp4": "",
-      "port4": "",
+      "govtIp3": "data.vahanshakti.in",
+      "port3": "4050",
+      "govtIp4": "*SET#SWEMP#MH#",
+      "port4": "4060",
       "stateEnable": "*SET#SWEMP#MH#",
       "firmwares": [
         {
@@ -1363,6 +1395,38 @@
           "expectedFirmwareVersion": "2.3.4",
           "fileName": "ATCU_5.2.9_REL05.bin",
           "description": ""
+        }
+      ]
+    },
+    "de": {
+      "stateAbbreviation": "d",
+      "govtIp1": "",
+      "port1": "",
+      "govtIp2": "",
+      "port2": "",
+      "govtIp3": "",
+      "port3": "",
+      "govtIp4": "",
+      "port4": "",
+      "stateEnable": "",
+      "firmwares": [
+        {
+          "version": "1.0.0",
+          "expectedFirmwareVersion": "1.0.1",
+          "fileName": "TCP01.bin",
+          "description": "Default base firmware"
+        },
+        {
+          "version": "1.0.1",
+          "expectedFirmwareVersion": "1.0.2",
+          "fileName": "TCP01_v101.bin",
+          "description": "Default patch update"
+        },
+        {
+          "version": "1.0.2",
+          "expectedFirmwareVersion": "1.0.3",
+          "fileName": "TCP01_v102.bin",
+          "description": "Default release 1.0.2"
         }
       ]
     },

@@ -989,18 +989,15 @@ class FotaOrchestrator(QObject):
 
         prncfg_ok = self.prncfg_response_received or bool(login_pkt) or self.prncfg_command_fired or self.reboot_detected
 
-        # Extract active firmware version from current log line, PRNCFG response line, 55AA login packet, or device
-        extracted_ver = MessageParser.parse_firmware_version(current_log_line) if current_log_line else None
-        if not extracted_ver and self.latest_prncfg_log_line:
-            extracted_ver = MessageParser.parse_firmware_version(self.latest_prncfg_log_line)
+        # Only the post-upgrade 55AA login packet version may be used for the final firmware match.
+        # Ignore PRNCFG / serial log versions entirely for this gate.
+        current_ver = ""
+        if login_pkt and getattr(login_pkt, "version", None):
+            current_ver = str(login_pkt.version).strip()
 
-        if login_pkt and hasattr(login_pkt, "version") and login_pkt.version:
-            extracted_ver = login_pkt.version
-
-        current_ver = extracted_ver or (cur_dev.version if cur_dev else "")
         target_ver = self.target_version or ""
 
-        # Verify version match strictly against target_version from 55AA Login Packet or *GET#PRNCFG# log
+        # Verify version match strictly against target_version from the 55AA Login Packet only
         version_matches = False
         if target_ver and current_ver:
             v_clean = current_ver.strip().lower()

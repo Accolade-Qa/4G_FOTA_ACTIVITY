@@ -124,16 +124,45 @@ class TestStage10FirmwareComparison(unittest.TestCase):
         orchestrator.ip2_verified = True
         orchestrator.reboot_detected = True
         orchestrator.prncfg_response_received = True
+        orchestrator.latest_55aa_login_packet = LoginPacketInfo(
+            imei="861564069210428",
+            iccid="8991000000000000000",
+            uin="ACON4NA082300010428",
+            version="5.2.9_REL13",
+            vin="MAT00000000000000",
+            model="4G",
+            state="DO NOT DELETE"
+        )
 
         stage_events = []
         orchestrator.stage_signal.connect(lambda s, state, msg: stage_events.append((s, state, msg)))
 
-        # Process log line with matching firmware version
-        orchestrator._evaluate_stage10_completion("######## SOFTWARE : 5.2.9_REL13 ########")
+        orchestrator._evaluate_stage10_completion("######## SOFTWARE : 5.2.8 ########")
 
         self.assertTrue(orchestrator.config_verified)
         self.assertEqual(orchestrator.stage_states[10], "PASSED")
         self.assertTrue(any(s == 10 and state == "PASSED" for s, state, _ in stage_events))
+
+    def test_stage10_requires_55aa_login_packet_version(self):
+        orchestrator = FotaOrchestrator()
+        orchestrator.current_device = LoginPacketInfo(
+            imei="861564069210428",
+            iccid="8991000000000000000",
+            uin="ACON4NA082300010428",
+            version="5.2.8",
+            vin="MAT00000000000000",
+            model="4G",
+            state="DO NOT DELETE"
+        )
+        orchestrator.target_version = "5.2.9_REL13"
+        orchestrator.ip2_verified = True
+        orchestrator.reboot_detected = True
+        orchestrator.prncfg_response_received = True
+
+        orchestrator._evaluate_stage10_completion("######## SOFTWARE : 5.2.9_REL13 ########")
+
+        self.assertFalse(orchestrator.config_verified)
+        self.assertNotEqual(orchestrator.stage_states[10], "PASSED")
 
 
 if __name__ == "__main__":
