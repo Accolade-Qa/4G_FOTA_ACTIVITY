@@ -48,3 +48,5 @@ input/.gitkeep
 output
 results
 logs
+
+.venv/
