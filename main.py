@@ -1,0 +1,46 @@
+"""Continuous FOTA Utility Application Entry Point."""
+
+import os
+import sys
+import logging
+from pathlib import Path
+
+# Ensure repo root directory is at the top of sys.path
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+# Import path resolver for PyInstaller bundle support
+from backend.path_resolver import get_base_dir
+
+# Get the correct base directory (handles both exe and source execution)
+BASE_DIR = get_base_dir()
+
+# Set explicit AppUserModelID on Windows so taskbar uses custom app icon instead of default Python icon
+import ctypes
+try:
+    myappid = "AccoladeElectronics.ContinuousFotaUtility.2.0"
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+except Exception:
+    pass
+
+# Suppress legacy Windows DirectWrite bitmap font loading warnings (8514oem/Fixedsys)
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts.warning=false;qt.qpa.fonts.debug=false"
+
+# Setup logging to write terminal logs to logs/fota_activity.log
+logs_dir = BASE_DIR / "logs"
+logs_dir.mkdir(parents=True, exist_ok=True)
+log_file = logs_dir / "fota_activity.log"
+
+file_handler = logging.FileHandler(log_file, encoding="utf-8")
+file_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s"))
+
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s"))
+
+logging.basicConfig(level=logging.INFO, handlers=[file_handler, stream_handler], force=True)
+
+from ui.app import main
+
+if __name__ == "__main__":
+    main()
