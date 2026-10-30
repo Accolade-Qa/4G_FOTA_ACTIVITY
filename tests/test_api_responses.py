@@ -222,6 +222,7 @@ class TestFotaApiClientResponses(unittest.TestCase):
     def test_fetch_and_save_servers_matrix_from_api(self, mock_auth, mock_get):
         """Test 2-step API fetch for state servers list and per-server firmware IDs."""
         mock_auth.return_value = True
+        self.client.token = "test-token"
 
         # Setup mock side effects for list_url (step 1) and by_id_url (step 2)
         resp_list = MagicMock()
@@ -237,6 +238,9 @@ class TestFotaApiClientResponses(unittest.TestCase):
         ok = self.client.fetch_and_save_servers_matrix()
         self.assertTrue(ok)
         self.assertTrue(self.client.config.firmware_json_path.exists())
+        self.assertEqual(self.client.session.headers["token"], "test-token")
+        for request_call in mock_get.call_args_list:
+            self.assertNotIn("token=", request_call.args[0])
 
         with open(self.client.config.firmware_json_path, "r", encoding="utf-8") as f:
             data = json.load(f)

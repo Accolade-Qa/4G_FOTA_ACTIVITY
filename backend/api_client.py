@@ -95,20 +95,20 @@ class FotaApiClient:
         try:
             res = self.session.post(login_url, json=payload, timeout=8)
             if res.status_code in (200, 201):
-                data = res.json()
+                res = res.json()
                 token_val = (
-                    data.get("data", {}).get("token")
-                    or data.get("token")
-                    or data.get("data", {}).get("accessToken")
-                    or data.get("data", {}).get("user", {}).get("token")
-                    or data.get("accessToken")
+                    res.get("token")
+                    or res.get("token")
+                    or res.get("data", {}).get("accessToken")
+                    or res.get("data", {}).get("user", {}).get("token")
+                    or res.get("accessToken")
                 )
                 user_id_val = (
-                    data.get("data", {}).get("id")
-                    or data.get("data", {}).get("_id")
-                    or data.get("id")
-                    or data.get("_id")
-                    or data.get("data", {}).get("user", {}).get("_id")
+                    res.get("data", {}).get("id")
+                    or res.get("data", {}).get("_id")
+                    or res.get("id")
+                    or res.get("_id")
+                    or res.get("data", {}).get("user", {}).get("_id")
                 )
                 if user_id_val:
                     self.user_id = str(user_id_val)
@@ -209,7 +209,7 @@ class FotaApiClient:
             logger.warning("No FETCH_SERVERS_API_URL configured in .env.")
             return False
 
-        active_token = self.token or self.config.user_id or self.user_id
+        active_token = self.token 
         if active_token:
             self.session.headers.update({
                 "Authorization": f"Bearer {active_token}",
@@ -225,9 +225,6 @@ class FotaApiClient:
             logger.info("Step 1: Fetching state servers list from API URL: %s", list_url)
             
             fetch_url = list_url
-            if active_token and "token=" not in fetch_url and "accessToken=" not in fetch_url:
-                sep = "&" if "?" in fetch_url else "?"
-                fetch_url = f"{fetch_url}{sep}token={active_token}"
 
             res = self.session.get(fetch_url, timeout=8)
             
@@ -318,9 +315,6 @@ class FotaApiClient:
                 # Step 2: Query per-server detail endpoint if state_id is available
                 if by_id_template and state_id:
                     detail_url = by_id_template.format(id=state_id)
-                    if active_token and "token=" not in detail_url:
-                        sep = "&" if "?" in detail_url else "?"
-                        detail_url = f"{detail_url}{sep}token={active_token}"
                     try:
                         d_res = self.session.get(detail_url, timeout=5)
                         if d_res.status_code == 200:
