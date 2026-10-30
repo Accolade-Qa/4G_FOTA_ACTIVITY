@@ -50,3 +50,4 @@ results
 logs
 
 .venv/
+*.env
